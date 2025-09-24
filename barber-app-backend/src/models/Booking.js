@@ -27,4 +27,12 @@ const bookingSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
+// Índices para optimización de consultas
+bookingSchema.index({ barber: 1, date: 1 }); // Para consultas por barbero y fecha
+bookingSchema.index({ user: 1, date: 1 }); // Para consultas por usuario y fecha
+bookingSchema.index({ barbershop: 1, date: 1 }); // Para consultas por barbería y fecha
+bookingSchema.index({ startTime: 1, endTime: 1 }); // Para consultas de solapamiento
+bookingSchema.index({ status: 1, date: 1 }); // Para consultas por estado y fecha
+bookingSchema.index({ createdAt: -1 }); // Para ordenamiento por fecha de creación
+
 module.exports = mongoose.model('Booking', bookingSchema);

@@ -1,14 +1,14 @@
-require("dotenv").config();
 const mongoose = require("mongoose");
 const { DateTime } = require("luxon");
 const Booking = require("../models/Booking");
+require("dotenv").config();
 
 
-const MONGO_URI = 'mongodb://localhost:27017/barberApp'; //
+const mongoURI = process.env.MONGO_URI;
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(MONGO_URI);
+    await mongoose.connect(mongoURI);
     console.log("🟢 Conectado a MongoDB");
   } catch (err) {
     console.error("❌ Error al conectar a MongoDB:", err);

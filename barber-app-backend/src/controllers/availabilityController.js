@@ -1,4 +1,5 @@
 const AvailabilityBlock = require("../models/AvailabilityBlock");
+const { handleError } = require("../utils/errorHandler");
 
 // Crear un nuevo bloqueo
 const createAvailabilityBlock = async (req, res) => {

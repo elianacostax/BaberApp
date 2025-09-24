@@ -11,7 +11,7 @@ const { validateBody, validateSchema, schemas } = require("../middlewares/valida
 // Crear nueva reserva (cliente)
 router.post("/", protect, validateSchema(schemas.bookingCreate), createBooking);
 //Repetir reserva
-router.post("/repeat", protect, authorizeRoles("client"), repeatBooking);
+router.post("/repeat", protect, authorizeRoles("client"), validateSchema(schemas.bookingRepeat), repeatBooking);
 // Obtener agenda de un barbero
 router.get("/barber/agenda", protect, authorizeRoles("barber"), getBarberAgenda);  
 //Obtener todas las reservas

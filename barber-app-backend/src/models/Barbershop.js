@@ -35,4 +35,9 @@ barbershopSchema.pre('save', function(next) {
     next();
 });
 
+// Índices para optimización de consultas
+barbershopSchema.index({ owner: 1 }); // Para consultas por propietario
+barbershopSchema.index({ isActive: 1 }); // Para consultas por estado activo
+barbershopSchema.index({ name: 'text', address: 'text', description: 'text' }); // Índice de texto para búsquedas
+
 module.exports = mongoose.model("Barbershop", barbershopSchema);

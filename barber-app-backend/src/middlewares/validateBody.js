@@ -144,6 +144,22 @@ const schemas = {
         })
     }),
 
+    // Validación para repetir reserva
+    bookingRepeat: Joi.object({
+        originalBookingId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+            'string.pattern.base': 'ID de reserva original inválido',
+            'any.required': 'El ID de la reserva original es obligatorio'
+        }),
+        newDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).required().messages({
+            'string.pattern.base': 'La nueva fecha debe estar en formato YYYY-MM-DD',
+            'any.required': 'La nueva fecha es obligatoria'
+        }),
+        newTime: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required().messages({
+            'string.pattern.base': 'La nueva hora debe estar en formato HH:MM',
+            'any.required': 'La nueva hora es obligatoria'
+        })
+    }),
+
     // Validación para agregar servicio a barbería
     serviceCreate: Joi.object({
         name: Joi.string().min(2).max(50).required().messages({
@@ -173,6 +189,52 @@ const schemas = {
             'number.max': 'La hora de cierre debe ser entre 1 y 23',
             'any.required': 'La hora de cierre es obligatoria'
         })
+    }),
+
+    // Validación para crear bloqueo de disponibilidad
+    availabilityBlockCreate: Joi.object({
+        start: Joi.date().iso().required().messages({
+            'date.base': 'La fecha de inicio debe ser una fecha válida en formato ISO',
+            'any.required': 'La fecha de inicio es obligatoria'
+        }),
+        end: Joi.date().iso().greater(Joi.ref('start')).required().messages({
+            'date.base': 'La fecha de fin debe ser una fecha válida en formato ISO',
+            'date.greater': 'La fecha de fin debe ser posterior a la fecha de inicio',
+            'any.required': 'La fecha de fin es obligatoria'
+        }),
+        reason: Joi.string().min(3).max(200).required().messages({
+            'string.min': 'La razón debe tener al menos 3 caracteres',
+            'string.max': 'La razón no puede tener más de 200 caracteres',
+            'any.required': 'La razón es obligatoria'
+        }),
+        type: Joi.string().valid('manual', 'holiday', 'maintenance', 'break').default('manual').messages({
+            'any.only': 'El tipo debe ser manual, holiday, maintenance o break'
+        }),
+        appliesToAllBarbers: Joi.boolean().default(false),
+        barber: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).when('appliesToAllBarbers', {
+            is: false,
+            then: Joi.required(),
+            otherwise: Joi.optional()
+        }).messages({
+            'string.pattern.base': 'ID de barbero inválido'
+        })
+    }),
+
+    // Validación para actualizar bloqueo de disponibilidad
+    availabilityBlockUpdate: Joi.object({
+        start: Joi.date().iso().optional(),
+        end: Joi.date().iso().optional(),
+        reason: Joi.string().min(3).max(200).optional(),
+        type: Joi.string().valid('manual', 'holiday', 'maintenance', 'break').optional(),
+        appliesToAllBarbers: Joi.boolean().optional()
+    }).custom((value, helpers) => {
+        // Validar que si se proporcionan start y end, end sea mayor que start
+        if (value.start && value.end && new Date(value.end) <= new Date(value.start)) {
+            return helpers.error('date.greater');
+        }
+        return value;
+    }).messages({
+        'date.greater': 'La fecha de fin debe ser posterior a la fecha de inicio'
     })
 };
 

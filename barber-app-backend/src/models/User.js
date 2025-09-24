@@ -110,6 +110,11 @@ const userSchema = new mongoose.Schema({
     },
 }, { timestamps: true });
 
+// Índices para optimización de consultas
+userSchema.index({ email: 1 }); // Índice único ya existe por unique: true
+userSchema.index({ role: 1 }); // Para consultas por rol
+userSchema.index({ barbershop: 1 }); // Para consultas por barbería
+
 // Encriptar contraseña antes de guardar
 userSchema.pre("save", async function (next) {
     if (!this.isModified("password")) return next();
