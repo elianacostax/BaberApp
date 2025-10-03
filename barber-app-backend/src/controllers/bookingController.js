@@ -6,6 +6,46 @@ const Booking = require('../models/Booking')
 const { DateTime } = require('luxon')
 const { Interval } = require('luxon');
 
+// Helper function para obtener servicio y precio
+const getServiceAndPrice = async (serviceId, barberId, barbershopId) => {
+    const barbershop = await Barbershop.findById(barbershopId);
+    const barber = await User.findById(barberId);
+    
+    if (!barbershop || !barber) {
+        throw new Error("Barbería o barbero no encontrado");
+    }
+
+    // Buscar servicio en barbería primero
+    let service = barbershop.services.id(serviceId);
+    let serviceSource = 'barbershop';
+    let price = service?.price;
+
+    if (!service) {
+        // Buscar en servicios personalizados del barbero
+        service = barber.customServices.id(serviceId);
+        serviceSource = 'custom';
+        price = service?.price;
+    }
+
+    if (!service) {
+        throw new Error("Servicio no encontrado");
+    }
+
+    // Si es servicio de barbería, verificar precio personalizado
+    if (serviceSource === 'barbershop') {
+        const customPrice = barber.customPrices.get(serviceId);
+        if (customPrice && customPrice.isActive) {
+            price = customPrice.price;
+        }
+    }
+
+    return {
+        service,
+        price,
+        serviceSource
+    };
+};
+
 
 
 
@@ -34,20 +74,23 @@ const createBooking = async (req, res) => {
             return res.status(400).json({ message: "No se pueden hacer reservas en fechas pasadas" });
         }
 
-        // Buscar barbería y servicio
-        const barbershopData = await Barbershop.findById(barbershop);
-        if (!barbershopData) return res.status(404).json({ message: "Barbería no encontrada" });
-
-        const selectedService = barbershopData.services.id(serviceId);
-        if (!selectedService) return res.status(404).json({ message: "Servicio no encontrado en esta barbería" });
-
         // Validar barbero
         const dataBarber = await User.findById(barber);
         if (!dataBarber || dataBarber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
-        const { name: serviceName, duration, price } = selectedService;
+        // Validar barbería
+        const barbershopData = await Barbershop.findById(barbershop);
+        if (!barbershopData) {
+            return res.status(404).json({ message: "Barbería no encontrada" });
+        }
+
+        // Obtener servicio y precio usando la función helper
+        try {
+            const { service: selectedService, price: servicePrice, serviceSource } = await getServiceAndPrice(serviceId, barber, barbershop);
+            const { name: serviceName, duration } = selectedService;
+            const price = servicePrice;
 
 
         // Calcular tiempos
@@ -101,10 +144,11 @@ const createBooking = async (req, res) => {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
-        const dayOfWeek = localStart.toFormat("cccc").toLowerCase();
-        const barberSchedule = barberData.schedule?.get(dayOfWeek);
+        // Usar índice numérico del día (Mon=1..Sun=7) y normalizar a 0..6 (Sun=0)
+        const dayIndex = localStart.weekday % 7; // 0..6
+        const barberSchedule = barberData.schedule?.get(dayIndex.toString());
         if (!barberSchedule || !barberSchedule.start || !barberSchedule.end) {
-            return res.status(400).json({ message: `El barbero no trabaja los días ${dayOfWeek}` });
+            return res.status(400).json({ message: `El barbero no trabaja ese día` });
         }
 
         const [startHour, startMinute] = barberSchedule.start.split(":").map(Number);
@@ -118,30 +162,34 @@ const createBooking = async (req, res) => {
             });
         }
 
-        // Crear reserva
-        const booking = new Booking({
-            user: userId,
-            barber,
-            barbershop,
-            date,
-            time,
-            startTime,
-            endTime,
-            serviceName: selectedService.name,
-            servicePrice: selectedService.price,
-            serviceDuration: selectedService.duration,
-            status: "pending"
-        });
+            // Crear reserva
+            const booking = new Booking({
+                user: userId,
+                barber,
+                barbershop,
+                date,
+                time,
+                startTime,
+                endTime,
+                serviceName: selectedService.name,
+                servicePrice: price,
+                serviceDuration: selectedService.duration,
+                status: "pending"
+            });
 
-        await booking.save();
+            await booking.save();
 
-        // Población de datos para respuesta
-        await booking.populate([
-            { path: 'barber', select: 'name' },
-            { path: 'barbershop', select: 'name address' }
-        ]);
+            // Población de datos para respuesta
+            await booking.populate([
+                { path: 'barber', select: 'name' },
+                { path: 'barbershop', select: 'name address' }
+            ]);
 
-        res.status(201).json({ message: "Reserva creada correctamente", booking });
+            res.status(201).json({ message: "Reserva creada correctamente", booking });
+
+        } catch (serviceError) {
+            return res.status(404).json({ message: serviceError.message });
+        }
 
     } catch (err) {
         handleError(res, 'Error al crear la reserva', 500, err);
@@ -251,7 +299,9 @@ const getAllBookings = async (req, res) => {
 
 
         // Filtro por rol
-        if (role === 'barber') {
+        if (role === 'admin') {
+            // Admin ve todo, sin filtro por usuario
+        } else if (role === 'barber') {
             query.barber = userId;
         } else {
             query.user = userId;
@@ -354,12 +404,12 @@ const updateBookingStatus = async (req, res) => {
         const { status } = req.body;
 
         if (!VALID_STATUSES.includes(status)) {
-            return res.status(400).json({ message: "Estado no valido" });
+            return res.status(400).json({ message: "Estado no válido" });
         }
 
         const booking = await Booking.findById(id);
         if (!booking) {
-            return res.status(404).json({ message: "Reserva no econtrada" })
+            return res.status(404).json({ message: "Reserva no encontrada" })
         }
 
         //Validacion de permisos para los roles
@@ -370,30 +420,70 @@ const updateBookingStatus = async (req, res) => {
         const isBarber = booking.barber.toString() === userId;
         const isAdmin = userRole === 'admin';
 
-        console.log(req.user);
-
         if (!isOwner && !isBarber && !isAdmin) {
             return res.status(403).json({ message: "No tienes permisos para modificar esta reserva" });
         }
-        // Solo admin y barbero pueden marcar como completed
-        if (status === "completed" && !isBarber && !isAdmin) {
+
+        // Validaciones de transiciones de estado
+        const currentStatus = booking.status;
+        const newStatus = status;
+
+        // Validar transiciones válidas
+        const validTransitions = {
+            'pending': ['confirmed', 'cancelled'],
+            'confirmed': ['completed', 'cancelled'],
+            'cancelled': [], // No se puede cambiar desde cancelado
+            'completed': [] // No se puede cambiar desde completado
+        };
+
+        if (!validTransitions[currentStatus].includes(newStatus)) {
+            return res.status(400).json({ 
+                message: `No se puede cambiar el estado de '${currentStatus}' a '${newStatus}'` 
+            });
+        }
+
+        // Validaciones específicas por rol
+        if (newStatus === "completed" && !isBarber && !isAdmin) {
             return res.status(403).json({ message: "Solo el barbero o admin puede marcar como completada" });
         }
-        //Restriccion de no modificar reserva ya cancelada
-        if (booking.status === "cancelled") {
-            return res.status(400).json({ message: "No se puede modificar una reserva cancelada" });
+
+        if (newStatus === "confirmed" && !isBarber && !isAdmin) {
+            return res.status(403).json({ message: "Solo el barbero o admin puede confirmar una reserva" });
         }
 
-        if (booking.status === "completed" && status !== "completed") {
-            return res.status(400).json({ message: "No se puede revertir una reserva completada" });
+        // Validar que no se pueda cancelar una reserva muy próxima (menos de 2 horas)
+        if (newStatus === "cancelled") {
+            const bookingDateTime = DateTime.fromISO(`${booking.date}T${booking.time}`, { zone: 'America/Bogota' });
+            const now = DateTime.now().setZone('America/Bogota');
+            const timeDiff = bookingDateTime.diff(now, 'hours').hours;
+
+            if (timeDiff < 2 && !isAdmin) {
+                return res.status(400).json({ 
+                    message: "No se puede cancelar una reserva con menos de 2 horas de anticipación" 
+                });
+            }
         }
 
-        booking.status = status;
+        // Actualizar estado y registrar quién lo modificó
+        booking.status = newStatus;
+        booking.modifiedBy = userId;
         await booking.save();
 
-        res.json({ message: "Estado actualizado", booking });
+        // Población de datos para respuesta
+        await booking.populate([
+            { path: 'user', select: 'name email' },
+            { path: 'barber', select: 'name' },
+            { path: 'barbershop', select: 'name address' }
+        ]);
+
+        res.json({ 
+            message: `Estado actualizado a '${newStatus}' correctamente`, 
+            booking,
+            previousStatus: currentStatus,
+            newStatus: newStatus
+        });
     } catch (err) {
-        handleError(res, 'Error al actualizar', 500, err);
+        handleError(res, 'Error al actualizar estado de la reserva', 500, err);
     }
 };
 
@@ -417,10 +507,33 @@ const cancelBooking = async (req, res) => {
             return res.status(400).json({ message: "No se puede cancelar esta reserva" });
         }
 
+        // Validar que no se pueda cancelar una reserva muy próxima (menos de 2 horas)
+        const bookingDateTime = DateTime.fromISO(`${booking.date}T${booking.time}`, { zone: 'America/Bogota' });
+        const now = DateTime.now().setZone('America/Bogota');
+        const timeDiff = bookingDateTime.diff(now, 'hours').hours;
+
+        if (timeDiff < 2) {
+            return res.status(400).json({ 
+                message: "No se puede cancelar una reserva con menos de 2 horas de anticipación. Contacta al barbero o administrador." 
+            });
+        }
+
         booking.status = "cancelled";
+        booking.modifiedBy = userId;
         await booking.save();
 
-        res.json({ message: "Reserva cancelada correctamente", booking });
+        // Población de datos para respuesta
+        await booking.populate([
+            { path: 'user', select: 'name email' },
+            { path: 'barber', select: 'name' },
+            { path: 'barbershop', select: 'name address' }
+        ]);
+
+        res.json({ 
+            message: "Reserva cancelada correctamente", 
+            booking,
+            cancelledAt: new Date().toISOString()
+        });
     } catch (err) {
         handleError(res, 'Error al cancelar la reserva', 500, err);
     }
@@ -563,4 +676,500 @@ const getMyReservations = async (req, res) => {
     }
 };
 
-module.exports = { createBooking, repeatBooking, getAvailableSlots, getBarberAgenda, getUserBookings, updateBookingStatus, getAllBookings, deleteBooking, getMyReservations, cancelBooking };
+// Obtener estadísticas del barbero
+const getBarberStats = async (req, res) => {
+    try {
+        const barberId = req.user.id;
+        const { date, type = 'day' } = req.query;
+        
+        let startDate, endDate;
+        
+        if (type === 'day') {
+            startDate = new Date(date);
+            endDate = new Date(date);
+            endDate.setDate(endDate.getDate() + 1);
+        } else if (type === 'week') {
+            const targetDate = new Date(date);
+            const dayOfWeek = targetDate.getDay();
+            const diff = targetDate.getDate() - dayOfWeek;
+            startDate = new Date(targetDate.setDate(diff));
+            endDate = new Date(startDate);
+            endDate.setDate(endDate.getDate() + 7);
+        }
+
+        // Estadísticas básicas
+        const totalAppointments = await Booking.countDocuments({
+            barber: barberId,
+            date: { $gte: startDate, $lt: endDate }
+        });
+
+        const completedAppointments = await Booking.countDocuments({
+            barber: barberId,
+            date: { $gte: startDate, $lt: endDate },
+            status: 'completed'
+        });
+
+        const pendingAppointments = await Booking.countDocuments({
+            barber: barberId,
+            date: { $gte: startDate, $lt: endDate },
+            status: 'confirmed'
+        });
+
+        const cancelledAppointments = await Booking.countDocuments({
+            barber: barberId,
+            date: { $gte: startDate, $lt: endDate },
+            status: 'cancelled'
+        });
+
+        // Ingresos totales
+        const revenueResult = await Booking.aggregate([
+            {
+                $match: {
+                    barber: barberId,
+                    date: { $gte: startDate, $lt: endDate },
+                    status: 'completed'
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalRevenue: { $sum: '$servicePrice' }
+                }
+            }
+        ]);
+
+        const totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+
+        // Calificación promedio (necesitaríamos un endpoint de reviews)
+        const averageRating = 4.5; // Placeholder - se implementaría con reviews
+
+        // Si es tipo 'week', devolver datos por día
+        if (type === 'week') {
+            const weeklyData = [];
+            const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+            
+            for (let i = 0; i < 7; i++) {
+                const dayStart = new Date(startDate);
+                dayStart.setDate(dayStart.getDate() + i);
+                const dayEnd = new Date(dayStart);
+                dayEnd.setDate(dayEnd.getDate() + 1);
+                
+                const dayAppointments = await Booking.countDocuments({
+                    barber: barberId,
+                    date: { $gte: dayStart, $lt: dayEnd }
+                });
+                
+                const dayRevenue = await Booking.aggregate([
+                    {
+                        $match: {
+                            barber: barberId,
+                            date: { $gte: dayStart, $lt: dayEnd },
+                            status: 'completed'
+                        }
+                    },
+                    {
+                        $group: {
+                            _id: null,
+                            revenue: { $sum: '$servicePrice' }
+                        }
+                    }
+                ]);
+                
+                weeklyData.push({
+                    day: days[i],
+                    appointments: dayAppointments,
+                    revenue: dayRevenue.length > 0 ? dayRevenue[0].revenue : 0
+                });
+            }
+            
+            return res.json(weeklyData);
+        }
+
+        res.json({
+            totalAppointments,
+            completedAppointments,
+            pendingAppointments,
+            cancelledAppointments,
+            totalRevenue,
+            averageRating
+        });
+    } catch (err) {
+        handleError(res, 'Error al obtener estadísticas del barbero', 500, err);
+    }
+};
+
+// Crear reserva como barbero o admin (para clientes)
+const createBookingForClient = async (req, res) => {
+    try {
+        const staffId = req.user.id;
+        const staffRole = req.user.role;
+        const { userId, barbershop, barber, serviceId, date, time } = req.body;
+
+        // Validar que sea barbero o admin
+        if (!['barber', 'admin'].includes(staffRole)) {
+            return res.status(403).json({ message: "Solo barberos y administradores pueden crear reservas para clientes" });
+        }
+
+        if (!userId || !barbershop || !barber || !serviceId || !date || !time) {
+            return res.status(400).json({ message: "Faltan campos obligatorios" });
+        }
+
+        // Validar que la fecha sea futura
+        const requestedDate = DateTime.fromISO(date);
+        if (requestedDate < DateTime.now().startOf('day')) {
+            return res.status(400).json({ message: "No se pueden hacer reservas en fechas pasadas" });
+        }
+
+        // Validar barbero
+        const dataBarber = await User.findById(barber);
+        if (!dataBarber || dataBarber.role !== 'barber') {
+            return res.status(404).json({ message: "Barbero no encontrado" });
+        }
+
+        // Validar cliente
+        const clientData = await User.findById(userId);
+        if (!clientData || clientData.role !== 'client') {
+            return res.status(404).json({ message: "Cliente no encontrado" });
+        }
+
+        // Validar barbería
+        const barbershopData = await Barbershop.findById(barbershop);
+        if (!barbershopData) {
+            return res.status(404).json({ message: "Barbería no encontrada" });
+        }
+
+        // Obtener servicio y precio usando la función helper
+        try {
+            const { service: selectedService, price: servicePrice, serviceSource } = await getServiceAndPrice(serviceId, barber, barbershop);
+            const { name: serviceName, duration } = selectedService;
+            const price = servicePrice;
+
+        // Calcular tiempos
+        const localStart = DateTime.fromISO(`${date}T${time}`, { zone: 'America/Bogota' });
+        if (!localStart.isValid) return res.status(400).json({ message: "Fecha u hora inválida" });
+
+        const localEnd = localStart.plus({ minutes: selectedService.duration });
+        const startTime = localStart.toUTC().toJSDate();
+        const endTime = localEnd.toUTC().toJSDate();
+
+        // Validar bloqueos de disponibilidad del barbero
+        const overlappingBlock = await AvailabilityBlock.findOne({
+            barber: barber,
+            start: { $lt: endTime },
+            end: { $gt: startTime }
+        });
+
+        if (overlappingBlock) {
+            return res.status(400).json({
+                message: `No se puede crear la reserva porque hay un bloqueo de disponibilidad: ${overlappingBlock.reason}`
+            });
+        }
+
+        // Validar horario de apertura de la barbería
+        const { openHour, closeHour } = barbershopData.openingHours;
+        if (
+            localStart.hour < openHour ||
+            localEnd.hour > closeHour ||
+            (localEnd.hour === closeHour && localEnd.minute > 0)
+        ) {
+            return res.status(400).json({
+                message: `La reserva debe estar entre las ${String(openHour).padStart(2, '0')}:00 y las ${String(closeHour).padStart(2, '0')}:00`
+            });
+        }
+
+        // Validar solapamiento
+        const overlappingBooking = await Booking.findOne({
+            barber,
+            date,
+            $or: [
+                { startTime: { $lt: endTime }, endTime: { $gt: startTime } }
+            ]
+        });
+
+        if (overlappingBooking) {
+            return res.status(400).json({ message: "Ya existe una reserva en este rango de tiempo" });
+        }
+
+        // Validar horario del barbero
+        const dayIndex = localStart.weekday % 7; // 0..6
+        const barberSchedule = dataBarber.schedule?.get(dayIndex.toString());
+        if (!barberSchedule || !barberSchedule.start || !barberSchedule.end) {
+            return res.status(400).json({ message: `El barbero no trabaja ese día` });
+        }
+
+        const [startHour, startMinute] = barberSchedule.start.split(":").map(Number);
+        const [endHour, endMinute] = barberSchedule.end.split(":").map(Number);
+        const barberStart = localStart.set({ hour: startHour, minute: startMinute });
+        const barberEnd = localStart.set({ hour: endHour, minute: endMinute });
+
+        if (localStart < barberStart || localEnd > barberEnd) {
+            return res.status(400).json({
+                message: `El barbero solo trabaja entre ${barberSchedule.start} y ${barberSchedule.end}`
+            });
+        }
+
+            // Crear reserva
+            const booking = new Booking({
+                user: userId,
+                barber,
+                barbershop,
+                date,
+                time,
+                startTime,
+                endTime,
+                serviceName: selectedService.name,
+                servicePrice: price,
+                serviceDuration: selectedService.duration,
+                status: "confirmed", // Confirmada automáticamente cuando la crea el staff
+                createdBy: staffId // Campo para rastrear quién creó la reserva
+            });
+
+            await booking.save();
+
+            // Población de datos para respuesta
+            await booking.populate([
+                { path: 'user', select: 'name email' },
+                { path: 'barber', select: 'name' },
+                { path: 'barbershop', select: 'name address' }
+            ]);
+
+            res.status(201).json({ 
+                message: "Reserva creada correctamente para el cliente", 
+                booking 
+            });
+
+        } catch (serviceError) {
+            return res.status(404).json({ message: serviceError.message });
+        }
+
+    } catch (err) {
+        handleError(res, 'Error al crear la reserva para el cliente', 500, err);
+    }
+};
+
+// Modificar barbero de una reserva (solo admin)
+const changeBookingBarber = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { newBarberId } = req.body;
+        const userRole = req.user.role;
+
+        if (userRole !== 'admin') {
+            return res.status(403).json({ message: "Solo los administradores pueden modificar el barbero de una reserva" });
+        }
+
+        if (!newBarberId) {
+            return res.status(400).json({ message: "El nuevo barbero es obligatorio" });
+        }
+
+        const booking = await Booking.findById(id);
+        if (!booking) {
+            return res.status(404).json({ message: "Reserva no encontrada" });
+        }
+
+        // Validar que la reserva no esté cancelada o completada
+        if (['cancelled', 'completed'].includes(booking.status)) {
+            return res.status(400).json({ message: "No se puede modificar el barbero de una reserva cancelada o completada" });
+        }
+
+        // Validar nuevo barbero
+        const newBarber = await User.findById(newBarberId);
+        if (!newBarber || newBarber.role !== 'barber') {
+            return res.status(404).json({ message: "Barbero no encontrado" });
+        }
+
+        // Validar que el nuevo barbero trabaje en la fecha y hora de la reserva
+        const localStart = DateTime.fromISO(`${booking.date}T${booking.time}`, { zone: 'America/Bogota' });
+        const dayIndex = localStart.weekday % 7;
+        const barberSchedule = newBarber.schedule?.get(dayIndex.toString());
+        
+        if (!barberSchedule || !barberSchedule.start || !barberSchedule.end) {
+            return res.status(400).json({ message: `El nuevo barbero no trabaja ese día` });
+        }
+
+        const [startHour, startMinute] = barberSchedule.start.split(":").map(Number);
+        const [endHour, endMinute] = barberSchedule.end.split(":").map(Number);
+        const barberStart = localStart.set({ hour: startHour, minute: startMinute });
+        const barberEnd = localStart.set({ hour: endHour, minute: endMinute });
+
+        if (localStart < barberStart || localStart.plus({ minutes: booking.serviceDuration }) > barberEnd) {
+            return res.status(400).json({
+                message: `El nuevo barbero no está disponible en ese horario`
+            });
+        }
+
+        // Validar que no haya conflictos con el nuevo barbero
+        const overlappingBooking = await Booking.findOne({
+            barber: newBarberId,
+            date: booking.date,
+            _id: { $ne: booking._id }, // Excluir la reserva actual
+            $or: [
+                { startTime: { $lt: booking.endTime }, endTime: { $gt: booking.startTime } }
+            ]
+        });
+
+        if (overlappingBooking) {
+            return res.status(400).json({ message: "El nuevo barbero ya tiene una reserva en ese horario" });
+        }
+
+        // Validar bloqueos de disponibilidad del nuevo barbero
+        const overlappingBlock = await AvailabilityBlock.findOne({
+            barber: newBarberId,
+            start: { $lt: booking.endTime },
+            end: { $gt: booking.startTime }
+        });
+
+        if (overlappingBlock) {
+            return res.status(400).json({
+                message: `No se puede asignar al nuevo barbero porque tiene un bloqueo de disponibilidad: ${overlappingBlock.reason}`
+            });
+        }
+
+        // Actualizar la reserva
+        const oldBarberId = booking.barber;
+        booking.barber = newBarberId;
+        booking.modifiedBy = req.user.id; // Campo para rastrear quién modificó la reserva
+        await booking.save();
+
+        // Población de datos para respuesta
+        await booking.populate([
+            { path: 'user', select: 'name email' },
+            { path: 'barber', select: 'name' },
+            { path: 'barbershop', select: 'name address' }
+        ]);
+
+        res.json({ 
+            message: "Barbero de la reserva actualizado correctamente", 
+            booking,
+            oldBarberId,
+            newBarberId
+        });
+
+    } catch (err) {
+        handleError(res, 'Error al modificar el barbero de la reserva', 500, err);
+    }
+};
+
+// Obtener reservas con actualización automática (WebSocket simulation)
+const getBookingsWithAutoUpdate = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const role = req.user.role;
+        const { date } = req.query;
+
+        // Construimos el filtro base
+        const query = {};
+
+        // Filtro por rol
+        if (role === 'admin') {
+            // Admin ve todo, sin filtro por usuario
+        } else if (role === 'barber') {
+            query.barber = userId;
+        } else {
+            query.user = userId;
+        }
+
+        // Filtro por fecha (si se proporciona)
+        if (date) {
+            query.date = date;
+        }
+
+        // Consulta con ordenamiento por fecha de modificación para detectar cambios
+        const bookings = await Booking.find(query)
+            .populate('user', 'name email')
+            .populate('barber', 'name')
+            .populate('barbershop', 'name address')
+            .sort({ updatedAt: -1, createdAt: -1 });
+
+        // Agregar timestamp para detectar cambios en el frontend
+        const response = {
+            bookings,
+            lastUpdate: new Date().toISOString(),
+            totalCount: bookings.length
+        };
+
+        res.status(200).json(response);
+    } catch (err) {
+        handleError(res, 'Error al obtener reservas con actualización automática', 500, err);
+    }
+};
+
+// Obtener estadísticas generales de reservas (para dashboard)
+const getBookingStats = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const role = req.user.role;
+        const { date } = req.query;
+
+        let matchQuery = {};
+
+        // Filtro por rol
+        if (role === 'admin') {
+            // Admin ve todo
+        } else if (role === 'barber') {
+            matchQuery.barber = userId;
+        } else {
+            matchQuery.user = userId;
+        }
+
+        // Filtro por fecha si se proporciona
+        if (date) {
+            matchQuery.date = date;
+        }
+
+        const stats = await Booking.aggregate([
+            { $match: matchQuery },
+            {
+                $group: {
+                    _id: '$status',
+                    count: { $sum: 1 },
+                    totalRevenue: { $sum: '$servicePrice' }
+                }
+            }
+        ]);
+
+        // Formatear estadísticas
+        const formattedStats = {
+            pending: 0,
+            confirmed: 0,
+            cancelled: 0,
+            completed: 0,
+            totalRevenue: 0,
+            totalBookings: 0
+        };
+
+        stats.forEach(stat => {
+            formattedStats[stat._id] = stat.count;
+            if (stat._id === 'completed') {
+                formattedStats.totalRevenue = stat.totalRevenue;
+            }
+            formattedStats.totalBookings += stat.count;
+        });
+
+        res.json({
+            stats: formattedStats,
+            lastUpdate: new Date().toISOString()
+        });
+
+    } catch (err) {
+        handleError(res, 'Error al obtener estadísticas de reservas', 500, err);
+    }
+};
+
+module.exports = { 
+    createBooking, 
+    repeatBooking, 
+    getAvailableSlots, 
+    getBarberAgenda, 
+    getUserBookings, 
+    updateBookingStatus, 
+    getAllBookings, 
+    deleteBooking, 
+    getMyReservations, 
+    cancelBooking, 
+    getBarberStats,
+    createBookingForClient,
+    changeBookingBarber,
+    getBookingsWithAutoUpdate,
+    getBookingStats
+};

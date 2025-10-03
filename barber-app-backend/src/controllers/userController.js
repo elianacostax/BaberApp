@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const { handleError } = require('../utils/errorHandler');
 
 //Actualizar horario de barbero
 const updateUserSchedule = async (req, res) => {
@@ -71,7 +72,7 @@ const getUserProfile = async (req, res) => {
 
     const user = await User.findById(id)
       .select("-password -__v") // oculta password y versión
-      .populate("barbershop", "name address phone"); // muestra info de la barbería
+      .populate("barbershop", "name address phone openingHours"); // incluye openingHours
 
     if (!user) {
       return res.status(404).json({ message: "Usuario no encontrado" });
@@ -112,4 +113,19 @@ module.exports = {
   updateBarberProfile,
   getUserProfile,
   addBlockedTime
+};
+
+// Listar usuarios con filtros opcionales (rol, barbería)
+module.exports.listUsers = async (req, res) => {
+  try {
+    const { role, barbershop } = req.query;
+    const query = {};
+    if (role) query.role = role;
+    if (barbershop) query.barbershop = barbershop;
+
+    const users = await User.find(query).select('-password -__v');
+    res.json(users);
+  } catch (err) {
+    handleError(res, 'Error al listar usuarios', 500, err);
+  }
 };

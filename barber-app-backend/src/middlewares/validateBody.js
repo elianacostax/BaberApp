@@ -75,6 +75,29 @@ const schemas = {
         })
     }),
 
+    // Validación para creación de usuario por admin
+    adminUserCreate: Joi.object({
+        name: Joi.string().min(2).max(50).required(),
+        email: Joi.string().email().required(),
+        password: Joi.string().min(6).max(128).required(),
+        role: Joi.string().valid('client', 'barber', 'admin').required(),
+        barbershop: Joi.string().optional(),
+    }),
+
+    // Validación de horario (schedule) formato Map 0..6 -> { start, end }
+    schedulePayload: Joi.object().pattern(
+        /^([0-6])$/,
+        Joi.object({
+            start: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+            end: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+        })
+    ),
+
+    // Admin: actualizar horario de un barbero
+    adminUpdateSchedule: Joi.object({
+        schedule: Joi.link('#schedulePayload').required()
+    }).append({}).id('adminUpdateSchedule').keys({}).fork([], (s) => s),
+
     // Validación para crear barbería
     barbershopCreate: Joi.object({
         name: Joi.string().min(2).max(100).required().messages({
@@ -158,6 +181,95 @@ const schemas = {
             'string.pattern.base': 'La nueva hora debe estar en formato HH:MM',
             'any.required': 'La nueva hora es obligatoria'
         })
+    }),
+
+    // Validación para crear reserva como barbero/admin
+    bookingCreateForClient: Joi.object({
+        userId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+            'string.pattern.base': 'ID de usuario inválido',
+            'any.required': 'El ID del usuario es obligatorio'
+        }),
+        barbershop: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+            'string.pattern.base': 'ID de barbería inválido',
+            'any.required': 'La barbería es obligatoria'
+        }),
+        barber: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+            'string.pattern.base': 'ID de barbero inválido',
+            'any.required': 'El barbero es obligatorio'
+        }),
+        serviceId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+            'string.pattern.base': 'ID de servicio inválido',
+            'any.required': 'El servicio es obligatorio'
+        }),
+        date: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).required().messages({
+            'string.pattern.base': 'La fecha debe estar en formato YYYY-MM-DD',
+            'any.required': 'La fecha es obligatoria'
+        }),
+        time: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required().messages({
+            'string.pattern.base': 'La hora debe estar en formato HH:MM',
+            'any.required': 'La hora es obligatoria'
+        })
+    }),
+
+    // Validación para cambiar barbero de una reserva
+    bookingChangeBarber: Joi.object({
+        newBarberId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+            'string.pattern.base': 'ID de barbero inválido',
+            'any.required': 'El nuevo barbero es obligatorio'
+        })
+    }),
+
+    // Validación para crear servicio personalizado
+    customServiceCreate: Joi.object({
+        name: Joi.string().min(2).max(50).required().messages({
+            'string.min': 'El nombre del servicio debe tener al menos 2 caracteres',
+            'string.max': 'El nombre del servicio no puede tener más de 50 caracteres',
+            'any.required': 'El nombre del servicio es obligatorio'
+        }),
+        description: Joi.string().max(200).optional().messages({
+            'string.max': 'La descripción no puede tener más de 200 caracteres'
+        }),
+        price: Joi.number().min(0).required().messages({
+            'number.min': 'El precio no puede ser negativo',
+            'any.required': 'El precio es obligatorio'
+        }),
+        duration: Joi.number().min(15).required().messages({
+            'number.min': 'La duración mínima es 15 minutos',
+            'any.required': 'La duración es obligatoria'
+        }),
+        category: Joi.string().valid('haircut', 'beard', 'styling', 'treatment', 'other').default('other').messages({
+            'any.only': 'La categoría debe ser haircut, beard, styling, treatment u other'
+        })
+    }),
+
+    // Validación para actualizar servicio personalizado
+    customServiceUpdate: Joi.object({
+        name: Joi.string().min(2).max(50).optional().messages({
+            'string.min': 'El nombre del servicio debe tener al menos 2 caracteres',
+            'string.max': 'El nombre del servicio no puede tener más de 50 caracteres'
+        }),
+        description: Joi.string().max(200).optional().messages({
+            'string.max': 'La descripción no puede tener más de 200 caracteres'
+        }),
+        price: Joi.number().min(0).optional().messages({
+            'number.min': 'El precio no puede ser negativo'
+        }),
+        duration: Joi.number().min(15).optional().messages({
+            'number.min': 'La duración mínima es 15 minutos'
+        }),
+        category: Joi.string().valid('haircut', 'beard', 'styling', 'treatment', 'other').optional().messages({
+            'any.only': 'La categoría debe ser haircut, beard, styling, treatment u other'
+        }),
+        isActive: Joi.boolean().optional()
+    }),
+
+    // Validación para establecer precio personalizado
+    customPriceSet: Joi.object({
+        price: Joi.number().min(0).required().messages({
+            'number.min': 'El precio no puede ser negativo',
+            'any.required': 'El precio es obligatorio'
+        }),
+        isActive: Joi.boolean().optional()
     }),
 
     // Validación para agregar servicio a barbería

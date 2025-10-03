@@ -25,6 +25,18 @@ const bookingSchema = new mongoose.Schema({
         default: "pending"
     },
 
+        // Campos para auditoría
+    createdBy: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'User', 
+        required: false // Solo se llena cuando la crea un barbero/admin
+    },
+    modifiedBy: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'User', 
+        required: false // Solo se llena cuando se modifica
+    },
+
 }, { timestamps: true });
 
 // Índices para optimización de consultas

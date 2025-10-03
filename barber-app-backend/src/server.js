@@ -8,7 +8,9 @@ const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require("./routes/adminRoutes");
 const availabilityRoutes = require("./routes/availabilityRoutes");
 const reviewRoutes = require('./routes/reviewRoutes');
-const { generalLimiter, authLimiter, bookingLimiter, adminLimiter } = require("./middlewares/rateLimiter");
+const serviceRoutes = require('./routes/serviceRoutes');
+const barberRoutes = require('./routes/barberRoutes');
+const { generalLimiter, authLimiter, bookingLimiter, staffBookingLimiter, adminLimiter } = require("./middlewares/rateLimiter");
 const { logRequest, logger } = require("./utils/logger");
 require("dotenv").config();
 const app = express();
@@ -43,6 +45,8 @@ app.use("/api/barbershops", barbershopRoutes);
 app.use('/api/users', userRoutes);
 app.use("/api/availability", availabilityRoutes);
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/services", serviceRoutes);
+app.use("/api/barbers", barberRoutes);
 
 //Conectar la base de datos
 connectDB();

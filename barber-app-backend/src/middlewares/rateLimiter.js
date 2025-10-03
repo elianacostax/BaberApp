@@ -35,14 +35,29 @@ const authLimiter = rateLimit({
 
 // Rate limiter para creación de reservas
 const bookingLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hora
-  max: 10, // máximo 10 reservas por IP por hora
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 20, // máximo 20 reservas por IP por 15 minutos
   message: {
-    error: 'Demasiadas reservas creadas, intenta de nuevo en una hora.'
+    error: 'Demasiadas reservas creadas, intenta de nuevo en 15 minutos.'
   },
   handler: (req, res) => {
     res.status(429).json({
-      message: 'Demasiadas reservas creadas, intenta de nuevo en una hora.',
+      message: 'Demasiadas reservas creadas, intenta de nuevo en 15 minutos.',
+      retryAfter: Math.round(req.rateLimit.resetTime / 1000)
+    });
+  }
+});
+
+// Rate limiter más permisivo para operaciones de barberos y admins
+const staffBookingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 50, // máximo 50 operaciones por IP por 15 minutos
+  message: {
+    error: 'Demasiadas operaciones de reservas, intenta de nuevo en 15 minutos.'
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      message: 'Demasiadas operaciones de reservas, intenta de nuevo en 15 minutos.',
       retryAfter: Math.round(req.rateLimit.resetTime / 1000)
     });
   }
@@ -67,5 +82,6 @@ module.exports = {
   generalLimiter,
   authLimiter,
   bookingLimiter,
+  staffBookingLimiter,
   adminLimiter
 };

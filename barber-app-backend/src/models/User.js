@@ -78,13 +78,19 @@ const userSchema = new mongoose.Schema({
         default: "",
         maxlength: [500, 'La biografía no puede tener más de 500 caracteres']
     },
-    services: [
+    // Servicios personalizados del barbero (adicionales a los de la barbería)
+    customServices: [
         {
             name: {
                 type: String,
                 required: [true, 'El nombre del servicio es obligatorio'],
                 minlength: [2, 'El nombre del servicio debe tener al menos 2 caracteres'],
                 maxlength: [50, 'El nombre del servicio no puede tener más de 50 caracteres']
+            },
+            description: {
+                type: String,
+                maxlength: [200, 'La descripción no puede tener más de 200 caracteres'],
+                default: ''
             },
             price: {
                 type: Number,
@@ -95,9 +101,34 @@ const userSchema = new mongoose.Schema({
                 type: Number,
                 required: [true, 'La duración del servicio es obligatoria'],
                 min: [15, 'La duración mínima es 15 minutos']
+            },
+            isActive: {
+                type: Boolean,
+                default: true
+            },
+            category: {
+                type: String,
+                enum: ['haircut', 'beard', 'styling', 'treatment', 'other'],
+                default: 'other'
             }
         },
     ],
+    
+    // Precios personalizados para servicios de la barbería
+    customPrices: {
+        type: Map,
+        of: {
+            price: {
+                type: Number,
+                min: [0, 'El precio no puede ser negativo']
+            },
+            isActive: {
+                type: Boolean,
+                default: true
+            }
+        },
+        default: new Map()
+    },
     barbershop: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Barbershop",
@@ -110,8 +141,14 @@ const userSchema = new mongoose.Schema({
     },
 }, { timestamps: true });
 
+// Campos para recuperación de contraseña
+userSchema.add({
+    resetPasswordToken: { type: String, default: null },
+    resetPasswordExpires: { type: Date, default: null },
+});
+
 // Índices para optimización de consultas
-userSchema.index({ email: 1 }); // Índice único ya existe por unique: true
+// userSchema.index({ email: 1 }); // Índice único ya existe por unique: true
 userSchema.index({ role: 1 }); // Para consultas por rol
 userSchema.index({ barbershop: 1 }); // Para consultas por barbería
 

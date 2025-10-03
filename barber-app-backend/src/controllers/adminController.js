@@ -1,6 +1,8 @@
 const Booking = require("../models/Booking");
 const Barbershop = require("../models/Barbershop");
 const User = require("../models/User");
+const jwt = require("jsonwebtoken");
+const { handleError } = require("../utils/errorHandler");
 const { DateTime } = require("luxon");
 
 const getDashboardStats = async (req, res) => {
@@ -91,3 +93,72 @@ const getDashboardStats = async (req, res) => {
 
 
 module.exports = { getDashboardStats };
+
+// Crear usuario (admin only)
+module.exports.createUser = async (req, res) => {
+    try {
+        const { name, email, password, role, barbershop } = req.body;
+
+        // Validar existencia
+        const exists = await User.findOne({ email });
+        if (exists) return res.status(400).json({ message: "El correo ya está en uso" });
+
+        // Si es barbero y se envía barbería, validar que exista
+        if (barbershop) {
+            const shop = await Barbershop.findById(barbershop).select('_id');
+            if (!shop) return res.status(400).json({ message: "Barbería no válida" });
+        }
+
+        const user = await User.create({
+            name,
+            email,
+            password,
+            role,
+            ...(barbershop ? { barbershop } : {}),
+        });
+
+        // No iniciar sesión; devolver datos creados
+        return res.status(201).json({
+            user: { id: user._id, name: user.name, email: user.email, role: user.role, barbershop: user.barbershop || null },
+        });
+    } catch (err) {
+        handleError(res, 'Error al crear usuario', 500, err);
+    }
+};
+
+// Actualizar horario de cualquier barbero (admin)
+module.exports.updateBarberSchedule = async (req, res) => {
+    try {
+        const { barberId } = req.params;
+        const { schedule } = req.body;
+
+        const barber = await User.findById(barberId).populate('barbershop');
+        if (!barber || barber.role !== 'barber') {
+            return res.status(404).json({ message: 'Barbero no encontrado' });
+        }
+
+        // Validar contra horario de barbería si existe
+        if (barber.barbershop) {
+            const shop = await Barbershop.findById(barber.barbershop);
+            if (shop && shop.openingHours) {
+                const { openHour, closeHour } = shop.openingHours;
+                for (const [day, hours] of Object.entries(schedule)) {
+                    if (!hours || !hours.start || !hours.end) continue;
+                    const [sh, sm] = hours.start.split(':').map(Number);
+                    const [eh, em] = hours.end.split(':').map(Number);
+                    if (sh < openHour || eh > closeHour || (eh === closeHour && em > 0)) {
+                        return res.status(400).json({
+                            message: `El día ${day} debe estar entre ${String(openHour).padStart(2,'0')}:00 y ${String(closeHour).padStart(2,'0')}:00`
+                        });
+                    }
+                }
+            }
+        }
+
+        barber.schedule = schedule;
+        await barber.save();
+        return res.json({ message: 'Horario actualizado', schedule: barber.schedule });
+    } catch (err) {
+        return res.status(500).json({ message: 'Error al actualizar horario', error: err.message });
+    }
+};
