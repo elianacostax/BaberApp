@@ -1,27 +1,29 @@
 const express = require("express");
 const router = express.Router();
-const { createBooking, repeatBooking, getAvailableSlots, getBarberAgenda, getUserBookings, updateBookingStatus, getAllBookings, deleteBooking, cancelBooking, getMyReservations, getBarberStats, createBookingForClient, changeBookingBarber, getBookingsWithAutoUpdate, getBookingStats } = require("../controllers/bookingController");
+const { createBooking, repeatBooking, getAvailableSlots, getBarberAgenda, getUserBookings, updateBookingStatus, getAllBookings, deleteBooking, cancelBooking, getMyReservations, createBookingForClient, changeBookingBarber, getBookingsWithAutoUpdate, getBookingStats, createWalkInBooking } = require("../controllers/bookingController");
 const { protect } = require("../middlewares/authMiddleware");
 const { authorizeRoles } = require("../middlewares/roleMiddleware");
 const { validateBody, validateSchema, schemas } = require("../middlewares/validateBody");
+const { bookingLimiter, staffBookingLimiter } = require("../middlewares/rateLimiter");
 
 
 
 
 // Crear nueva reserva (cliente)
-router.post("/", protect, validateSchema(schemas.bookingCreate), createBooking);
+router.post("/", protect, bookingLimiter, validateSchema(schemas.bookingCreate), createBooking);
 
 // Crear reserva como barbero/admin para un cliente
-router.post("/for-client", protect, authorizeRoles("barber", "admin"), validateSchema(schemas.bookingCreateForClient), createBookingForClient);
+router.post("/for-client", protect, authorizeRoles("barber", "admin", "owner"), staffBookingLimiter, validateSchema(schemas.bookingCreateForClient), createBookingForClient);
+
+// Crear reserva walk-in (cliente no registrado)
+router.post("/walk-in", protect, authorizeRoles("barber", "admin", "owner"), staffBookingLimiter, createWalkInBooking);
 
 //Repetir reserva
-router.post("/repeat", protect, authorizeRoles("client"), validateSchema(schemas.bookingRepeat), repeatBooking);
+router.post("/repeat", protect, authorizeRoles("client"), bookingLimiter, validateSchema(schemas.bookingRepeat), repeatBooking);
 
 // Obtener agenda de un barbero
 router.get("/barber/agenda", protect, authorizeRoles("barber"), getBarberAgenda);
 
-// Obtener estadísticas del barbero
-router.get("/barber/stats", protect, authorizeRoles("barber"), getBarberStats);  
 
 //Obtener todas las reservas
 router.get('/', protect, getAllBookings);
@@ -39,13 +41,13 @@ router.get("/my-bookings", protect, getUserBookings);
 router.patch("/:id", protect, validateSchema(schemas.bookingStatusUpdate), updateBookingStatus);
 
 // ✅ Cambiar barbero de una reserva (solo admin)
-router.patch("/:id/change-barber", protect, authorizeRoles("admin"), validateSchema(schemas.bookingChangeBarber), changeBookingBarber);
+router.patch("/:id/change-barber", protect, authorizeRoles("admin", "owner"), validateSchema(schemas.bookingChangeBarber), changeBookingBarber);
 
 //Eliminar reservas, solo admin
-router.delete('/:id', protect, authorizeRoles("admin"), deleteBooking);
+router.delete('/:id', protect, authorizeRoles("admin", "owner"), deleteBooking);
 
 //Consultar disponibildad
-router.get('/availability', protect, getAvailableSlots);
+router.get('/availability', getAvailableSlots);
 
 //Consulta histporico de reservas
 router.get('/my-reservations', protect, getMyReservations);

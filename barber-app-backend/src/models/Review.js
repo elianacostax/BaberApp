@@ -1,11 +1,61 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require("sequelize");
+const { sequelize } = require("../config/db");
 
-const reviewSchema = new mongoose.Schema({
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    barber: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    booking: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking', required: true, unique: true },
-    rating: { type: Number, required: true, min: 1, max: 5 },
-    comment: { type: String, maxlength: 500 },
-}, { timestamps: true });
+const Review = sequelize.define(
+  "Review",
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    userId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+    },
+    barberId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+    },
+    bookingId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      unique: true,
+      references: {
+        model: "Bookings",
+        key: "id",
+      },
+    },
+    rating: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      validate: {
+        min: 1,
+        max: 5,
+      },
+    },
+    comment: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+  },
+  {
+    tableName: "Reviews",
+    timestamps: true,
+    indexes: [
+      { fields: ["userId"] },
+      { fields: ["barberId"] },
+      { fields: ["bookingId"], unique: true },
+    ],
+  }
+);
 
-module.exports = mongoose.model('Review', reviewSchema);
+module.exports = Review;

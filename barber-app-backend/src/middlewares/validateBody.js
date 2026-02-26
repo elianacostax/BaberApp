@@ -59,8 +59,12 @@ const schemas = {
             'string.max': 'La contraseña no puede tener más de 128 caracteres',
             'any.required': 'La contraseña es obligatoria'
         }),
-        role: Joi.string().valid('client', 'barber', 'admin').default('client').messages({
-            'any.only': 'El rol debe ser client, barber o admin'
+        phone: Joi.string().min(7).max(15).optional().messages({
+            'string.min': 'El teléfono debe tener al menos 7 caracteres',
+            'string.max': 'El teléfono no puede tener más de 15 caracteres'
+        }),
+        role: Joi.string().valid('client', 'barber', 'admin', 'owner').default('client').messages({
+            'any.only': 'El rol debe ser client, barber, owner o admin'
         })
     }),
 
@@ -75,12 +79,31 @@ const schemas = {
         })
     }),
 
+    // Registro de barbería + owner
+    barbershopRegister: Joi.object({
+        ownerName: Joi.string().trim().min(2).max(50).required(),
+        ownerEmail: Joi.string().trim().email().required(),
+        ownerPassword: Joi.string().min(6).max(128).required(),
+        ownerPhone: Joi.string().trim().min(7).max(15).optional().empty(''),
+        barbershopName: Joi.string().trim().min(2).max(100).required(),
+        address: Joi.string().trim().min(5).max(200).optional().empty(''),
+        location: Joi.string().trim().min(2).max(200).optional().empty(''),
+        phone: Joi.string().trim().pattern(/^[0-9+\-\s()]+$/).optional().empty(''),
+        description: Joi.string().trim().max(500).optional().empty(''),
+        openingHours: Joi.object({
+            openHour: Joi.number().integer().min(0).max(23).default(9),
+            closeHour: Joi.number().integer().min(1).max(23).default(18)
+        }).optional()
+    }).or('address', 'location').messages({
+        'object.missing': 'Debe proporcionar ubicación o dirección'
+    }),
+
     // Validación para creación de usuario por admin
     adminUserCreate: Joi.object({
         name: Joi.string().min(2).max(50).required(),
         email: Joi.string().email().required(),
         password: Joi.string().min(6).max(128).required(),
-        role: Joi.string().valid('client', 'barber', 'admin').required(),
+        role: Joi.string().valid('client', 'barber', 'admin', 'owner').required(),
         barbershop: Joi.string().optional(),
     }),
 
@@ -105,10 +128,14 @@ const schemas = {
             'string.max': 'El nombre no puede tener más de 100 caracteres',
             'any.required': 'El nombre es obligatorio'
         }),
-        address: Joi.string().min(5).max(200).required().messages({
+        address: Joi.string().min(5).max(200).optional().messages({
             'string.min': 'La dirección debe tener al menos 5 caracteres',
-            'string.max': 'La dirección no puede tener más de 200 caracteres',
-            'any.required': 'La dirección es obligatoria'
+            'string.max': 'La dirección no puede tener más de 200 caracteres'
+        }),
+        location: Joi.string().min(2).max(200).required().messages({
+            'string.min': 'La ubicación debe tener al menos 2 caracteres',
+            'string.max': 'La ubicación no puede tener más de 200 caracteres',
+            'any.required': 'La ubicación es obligatoria'
         }),
         phone: Joi.string().pattern(/^[0-9+\-\s()]+$/).optional().messages({
             'string.pattern.base': 'El teléfono debe contener solo números, espacios, guiones, paréntesis y el signo +'
@@ -135,17 +162,31 @@ const schemas = {
         ).optional()
     }),
 
+    // Validación para actualizar barbería
+    barbershopUpdate: Joi.object({
+        name: Joi.string().min(2).max(100).optional(),
+        address: Joi.string().min(5).max(200).optional(),
+        location: Joi.string().min(2).max(200).optional(),
+        phone: Joi.string().pattern(/^[0-9+\-\s()]+$/).optional(),
+        description: Joi.string().max(500).optional(),
+        openingHours: Joi.object({
+            openHour: Joi.number().integer().min(0).max(23).optional(),
+            closeHour: Joi.number().integer().min(1).max(23).optional()
+        }).optional(),
+        isActive: Joi.boolean().optional()
+    }),
+
     // Validación para crear reserva
     bookingCreate: Joi.object({
-        barbershop: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        barbershop: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de barbería inválido',
             'any.required': 'La barbería es obligatoria'
         }),
-        barber: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        barber: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de barbero inválido',
             'any.required': 'El barbero es obligatorio'
         }),
-        serviceId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        serviceId: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de servicio inválido',
             'any.required': 'El servicio es obligatorio'
         }),
@@ -169,7 +210,7 @@ const schemas = {
 
     // Validación para repetir reserva
     bookingRepeat: Joi.object({
-        originalBookingId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        originalBookingId: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de reserva original inválido',
             'any.required': 'El ID de la reserva original es obligatorio'
         }),
@@ -185,19 +226,19 @@ const schemas = {
 
     // Validación para crear reserva como barbero/admin
     bookingCreateForClient: Joi.object({
-        userId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        userId: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de usuario inválido',
             'any.required': 'El ID del usuario es obligatorio'
         }),
-        barbershop: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        barbershop: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de barbería inválido',
             'any.required': 'La barbería es obligatoria'
         }),
-        barber: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        barber: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de barbero inválido',
             'any.required': 'El barbero es obligatorio'
         }),
-        serviceId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        serviceId: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de servicio inválido',
             'any.required': 'El servicio es obligatorio'
         }),
@@ -213,7 +254,7 @@ const schemas = {
 
     // Validación para cambiar barbero de una reserva
     bookingChangeBarber: Joi.object({
-        newBarberId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required().messages({
+        newBarberId: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de barbero inválido',
             'any.required': 'El nuevo barbero es obligatorio'
         })
@@ -237,8 +278,8 @@ const schemas = {
             'number.min': 'La duración mínima es 15 minutos',
             'any.required': 'La duración es obligatoria'
         }),
-        category: Joi.string().valid('haircut', 'beard', 'styling', 'treatment', 'other').default('other').messages({
-            'any.only': 'La categoría debe ser haircut, beard, styling, treatment u other'
+        category: Joi.string().valid('haircut', 'beard', 'mustache', 'eyebrows', 'shampoo', 'styling', 'treatment', 'other').default('other').messages({
+            'any.only': 'La categoría debe ser haircut, beard, mustache, eyebrows, shampoo, styling, treatment u other'
         })
     }),
 
@@ -257,8 +298,8 @@ const schemas = {
         duration: Joi.number().min(15).optional().messages({
             'number.min': 'La duración mínima es 15 minutos'
         }),
-        category: Joi.string().valid('haircut', 'beard', 'styling', 'treatment', 'other').optional().messages({
-            'any.only': 'La categoría debe ser haircut, beard, styling, treatment u other'
+        category: Joi.string().valid('haircut', 'beard', 'mustache', 'eyebrows', 'shampoo', 'styling', 'treatment', 'other').optional().messages({
+            'any.only': 'La categoría debe ser haircut, beard, mustache, eyebrows, shampoo, styling, treatment u other'
         }),
         isActive: Joi.boolean().optional()
     }),
@@ -279,6 +320,9 @@ const schemas = {
             'string.max': 'El nombre del servicio no puede tener más de 50 caracteres',
             'any.required': 'El nombre del servicio es obligatorio'
         }),
+        description: Joi.string().max(200).optional().messages({
+            'string.max': 'La descripción no puede tener más de 200 caracteres'
+        }),
         price: Joi.number().min(0).required().messages({
             'number.min': 'El precio no puede ser negativo',
             'any.required': 'El precio es obligatorio'
@@ -286,7 +330,12 @@ const schemas = {
         duration: Joi.number().min(15).required().messages({
             'number.min': 'La duración mínima es 15 minutos',
             'any.required': 'La duración es obligatoria'
-        })
+        }),
+        category: Joi.string().valid('haircut', 'beard', 'mustache', 'eyebrows', 'shampoo', 'styling', 'treatment', 'other').optional().messages({
+            'any.only': 'La categoría debe ser haircut, beard, mustache, eyebrows, shampoo, styling, treatment u other'
+        }),
+        isActive: Joi.boolean().optional(),
+        isRequired: Joi.boolean().optional()
     }),
 
     // Validación para actualizar horarios de barbería
@@ -323,7 +372,7 @@ const schemas = {
             'any.only': 'El tipo debe ser manual, holiday, maintenance o break'
         }),
         appliesToAllBarbers: Joi.boolean().default(false),
-        barber: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).when('appliesToAllBarbers', {
+        barber: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).when('appliesToAllBarbers', {
             is: false,
             then: Joi.required(),
             otherwise: Joi.optional()

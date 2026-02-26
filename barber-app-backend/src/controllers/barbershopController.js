@@ -1,25 +1,40 @@
 const Barbershop = require("../models/Barbershop");
+const User = require("../models/User");
 const { handleError } = require("../utils/errorHandler");
+
+const ensureOwnerOrAdmin = async (req, barbershopId) => {
+    if (req.user?.role === 'admin') return true;
+    if (req.user?.role !== 'owner') return false;
+    const shop = await Barbershop.findByPk(barbershopId);
+    if (!shop) return false;
+    return shop.ownerId === req.user.id;
+};
 
 //Crear una barberoa
 const createBarbershop = async (req, res) => {
     try {
         const ownerId = req.user.id;
-        const { name, address, services, openingHours } = req.body;
+        const { name, address, location, phone, services, openingHours, description, isActive } = req.body;
 
-        if (!name || !address) {
-            return res.status(400).json({ message: "Nombre y dirección son obligatorios" });
+        const resolvedAddress = address || location;
+        const resolvedLocation = location || address;
+
+        if (!name || !resolvedAddress || !resolvedLocation) {
+            return res.status(400).json({ message: "Nombre, dirección y ubicación son obligatorios" });
         }
 
         const barbershop = await Barbershop.create({
             name,
-            address,
-            owner: ownerId,
+            address: resolvedAddress,
+            location: resolvedLocation,
+            phone,
+            ownerId: ownerId,
             services: services || [],
-            openingHours: openingHours || { openHour: 9, closeHour: 18 }
+            openingHours: openingHours || { openHour: 9, closeHour: 18 },
+            description: description || null,
+            isActive: isActive !== undefined ? isActive : true
         });
 
-        await barbershop.save();
         res.status(201).json({ message: "Barbería creada exitosamente", barbershop });
     } catch (err) {
         handleError(res, 'Error al crear la barberia', 500, err);
@@ -30,7 +45,22 @@ const createBarbershop = async (req, res) => {
 //Consultar barberias
 const getAllBarbershops = async (req, res) => {
     try {
-        const barbershops = await Barbershop.find().populate("owner", "name email");
+        const { isActive } = req.query;
+        const where = {};
+        if (typeof isActive !== 'undefined') where.isActive = isActive === 'true';
+
+        const barbershops = await Barbershop.findAll({
+            where,
+            include: [{
+                model: User,
+                as: "owner",
+                attributes: ["id", "name", "email"]
+            }, {
+                model: User,
+                as: "barbers",
+                attributes: ["id", "name"]
+            }]
+        });
         res.json(barbershops);
     } catch (err) {
         handleError(res, 'Error al obtener la barberia', 500, err);
@@ -38,22 +68,96 @@ const getAllBarbershops = async (req, res) => {
     }
 };
 
+// Actualizar barbería
+const updateBarbershop = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, address, location, phone, description, openingHours, isActive } = req.body;
+
+        if (!(await ensureOwnerOrAdmin(req, id))) {
+            return res.status(403).json({ message: "No autorizado para modificar esta barbería" });
+        }
+
+        const barbershop = await Barbershop.findByPk(id);
+        if (!barbershop) {
+            return res.status(404).json({ message: "Barbería no encontrada" });
+        }
+
+        if (name !== undefined) barbershop.name = name;
+        if (address !== undefined) barbershop.address = address;
+        if (location !== undefined) barbershop.location = location;
+        if (phone !== undefined) barbershop.phone = phone;
+        if (description !== undefined) barbershop.description = description;
+        if (openingHours !== undefined) barbershop.openingHours = openingHours;
+        if (isActive !== undefined) barbershop.isActive = isActive;
+
+        // Fallbacks si falta address o location
+        if (!barbershop.address && barbershop.location) {
+            barbershop.address = barbershop.location;
+        }
+        if (!barbershop.location && barbershop.address) {
+            barbershop.location = barbershop.address;
+        }
+
+        await barbershop.save();
+
+        res.json({ message: "Barbería actualizada correctamente", barbershop });
+    } catch (err) {
+        handleError(res, 'Error al actualizar la barbería', 500, err);
+    }
+};
+
+// Eliminar barbería
+const deleteBarbershop = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!(await ensureOwnerOrAdmin(req, id))) {
+            return res.status(403).json({ message: "No autorizado para modificar esta barbería" });
+        }
+
+        const barbershop = await Barbershop.findByPk(id);
+        if (!barbershop) {
+            return res.status(404).json({ message: "Barbería no encontrada" });
+        }
+
+        await barbershop.destroy();
+        res.json({ message: "Barbería eliminada correctamente" });
+    } catch (err) {
+        handleError(res, 'Error al eliminar la barbería', 500, err);
+    }
+};
+
 //Agregar un servicio a la barberia
 const addServiceToBarbershop = async (req, res) => {
     try {
         const { id } = req.params; // barbershop ID
-        const { name, price, duration } = req.body;
+        const { name, price, duration, description, category, isRequired } = req.body;
+
+        if (!(await ensureOwnerOrAdmin(req, id))) {
+            return res.status(403).json({ message: "No autorizado para modificar esta barbería" });
+        }
 
         if (!name || !price || !duration) {
             return res.status(400).json({ message: "Faltan campos obligatorios del servicio" });
         }
 
-        const barbershop = await Barbershop.findById(id);
+        const barbershop = await Barbershop.findByPk(id);
         if (!barbershop) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
 
-        barbershop.services.push({ name, price, duration });
+        const services = barbershop.services || [];
+        services.push({ 
+            name, 
+            price, 
+            duration,
+            description: description || '',
+            category: category || 'other',
+            isActive: true,
+            isRequired: isRequired || false
+        });
+        barbershop.services = services;
         await barbershop.save();
 
         res.json({ message: "Servicio agregado correctamente", barbershop });
@@ -66,22 +170,34 @@ const addServiceToBarbershop = async (req, res) => {
 const updateServiceInBarbershop = async (req, res) => {
     try {
         const { id, serviceId } = req.params;
-        const { name, price, duration } = req.body;
+        const { name, price, duration, description, category, isActive, isRequired } = req.body;
 
-        const barbershop = await Barbershop.findById(id);
+        if (!(await ensureOwnerOrAdmin(req, id))) {
+            return res.status(403).json({ message: "No autorizado para modificar esta barbería" });
+        }
+
+        const barbershop = await Barbershop.findByPk(id);
         if (!barbershop) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
 
-        const service = barbershop.services.id(serviceId);
-        if (!service) {
+        const services = barbershop.services || [];
+        const serviceIndex = services.findIndex(s => s._id === serviceId || s.id === serviceId);
+        if (serviceIndex === -1) {
             return res.status(404).json({ message: "Servicio no encontrado" });
         }
 
+        const service = services[serviceIndex];
         if (name !== undefined) service.name = name;
         if (price !== undefined) service.price = price;
         if (duration !== undefined) service.duration = duration;
+        if (description !== undefined) service.description = description;
+        if (category !== undefined) service.category = category;
+        if (isActive !== undefined) service.isActive = isActive;
+        if (isRequired !== undefined) service.isRequired = isRequired;
 
+        services[serviceIndex] = service;
+        barbershop.services = services;
         await barbershop.save();
 
         res.json({ message: "Servicio actualizado correctamente", service });
@@ -96,17 +212,26 @@ const deleteServiceFromBarbershop = async (req, res) => {
     try {
         const { id, serviceId } = req.params;
 
-        const barbershop = await Barbershop.findById(id);
+        if (!(await ensureOwnerOrAdmin(req, id))) {
+            return res.status(403).json({ message: "No autorizado para modificar esta barbería" });
+        }
+
+        const barbershop = await Barbershop.findByPk(id);
         if (!barbershop) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
 
-        const service = barbershop.services.id(serviceId);
-        if (!service) {
+        const services = barbershop.services || [];
+        const filteredServices = services.filter(s => 
+            (s._id && s._id.toString() !== serviceId) && 
+            (s.id && s.id.toString() !== serviceId)
+        );
+        
+        if (filteredServices.length === services.length) {
             return res.status(404).json({ message: "Servicio no encontrado" });
         }
 
-        barbershop.services.pull(serviceId);
+        barbershop.services = filteredServices;
         await barbershop.save();
 
         res.json({ message: "Servicio eliminado correctamente" });
@@ -120,12 +245,12 @@ const getBarbershopServices = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const barbershop = await Barbershop.findById(id);
+        const barbershop = await Barbershop.findByPk(id);
         if (!barbershop) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
 
-        res.json({ services: barbershop.services });
+        res.json({ services: barbershop.services || [] });
     } catch (err) {
         handleError(res, 'Error al obtener servicios', 500, err);
     }
@@ -137,6 +262,10 @@ const updateBookingHours = async (req, res) => {
         const { id } = req.params;
         const { openHour, closeHour } = req.body;
 
+        if (!(await ensureOwnerOrAdmin(req, id))) {
+            return res.status(403).json({ message: "No autorizado para modificar esta barbería" });
+        }
+
         if (typeof openHour !== 'number' || typeof closeHour !== 'number') {
             return res.status(400).json({ message: "los horarios deben ser numeros enteros, en horario militar" })
         }
@@ -145,23 +274,16 @@ const updateBookingHours = async (req, res) => {
             return res.status(400).json({ message: "La hora de apertura debe ser menor a la de cierre" })
         }
 
-        const barbershop = await Barbershop.findByIdAndUpdate(
-            id,
-            {
-                'openingHours.openHour': openHour,
-                'openingHours.closeHour': closeHour,
-            },
-            { new: true }
-        );
-
-        await Barbershop.updateOne(
-            { _id: id },
-            { $unset: { openHour: "", closeHour: "" } }
-        );
-
+        const barbershop = await Barbershop.findByPk(id);
         if (!barbershop) {
             return res.status(404).json({ message: "Barberia no encontrada" })
         }
+
+        barbershop.openingHours = {
+            openHour,
+            closeHour
+        };
+        await barbershop.save();
 
         res.json({ message: "Horario actualizado correctamente", barbershop });
 
@@ -173,6 +295,8 @@ const updateBookingHours = async (req, res) => {
 module.exports = {
     createBarbershop,
     getAllBarbershops,
+    updateBarbershop,
+    deleteBarbershop,
     updateBookingHours,
     addServiceToBarbershop,
     updateServiceInBarbershop,

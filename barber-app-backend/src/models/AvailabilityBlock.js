@@ -1,21 +1,57 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require("sequelize");
+const { sequelize } = require("../config/db");
 
-const availabilityBlockSchema = new mongoose.Schema({
-    barber: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    start: { type: Date, required: true },
-    end: { type: Date, required: true },
-    reason: { type: String, default: "manual" },
-    createdBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+const AvailabilityBlock = sequelize.define(
+  "AvailabilityBlock",
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
     },
-     appliesToAllBarbers: { type: Boolean, default: false },
-}, { timestamps: true });
+    barberId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+    },
+    start: {
+      type: DataTypes.DATE,
+      allowNull: false,
+    },
+    end: {
+      type: DataTypes.DATE,
+      allowNull: false,
+    },
+    reason: {
+      type: DataTypes.STRING,
+      defaultValue: "manual",
+    },
+    createdById: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+    },
+    appliesToAllBarbers: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+  },
+  {
+    tableName: "AvailabilityBlocks",
+    timestamps: true,
+    indexes: [
+      { fields: ["barberId", "start", "end"] },
+      { fields: ["appliesToAllBarbers", "start", "end"] },
+      { fields: ["start", "end"] },
+      { fields: ["createdById"] },
+    ],
+  }
+);
 
-// Índices para optimización de consultas
-availabilityBlockSchema.index({ barber: 1, start: 1, end: 1 }); // Para consultas por barbero y rango de fechas
-availabilityBlockSchema.index({ appliesToAllBarbers: 1, start: 1, end: 1 }); // Para consultas globales
-availabilityBlockSchema.index({ start: 1, end: 1 }); // Para consultas de solapamiento
-availabilityBlockSchema.index({ createdBy: 1 }); // Para consultas por creador
-
-module.exports = mongoose.model('AvailabilityBlock', availabilityBlockSchema);
+module.exports = AvailabilityBlock;

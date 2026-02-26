@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const connectDB = require("./config/db");
+const { connectDB } = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const barbershopRoutes = require("./routes/barbershopRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
@@ -10,7 +10,7 @@ const availabilityRoutes = require("./routes/availabilityRoutes");
 const reviewRoutes = require('./routes/reviewRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
 const barberRoutes = require('./routes/barberRoutes');
-const { generalLimiter, authLimiter, bookingLimiter, staffBookingLimiter, adminLimiter } = require("./middlewares/rateLimiter");
+const { generalLimiter, authLimiter, adminLimiter } = require("./middlewares/rateLimiter");
 const { logRequest, logger } = require("./utils/logger");
 require("dotenv").config();
 const app = express();
@@ -37,7 +37,7 @@ app.use(logRequest);
 
 // Rutas con rate limiting específico
 app.use("/api/auth", authLimiter, authRoutes);
-app.use('/api/bookings', bookingLimiter, bookingRoutes);
+app.use('/api/bookings', bookingRoutes);
 app.use("/api/admin", adminLimiter, adminRoutes);
 
 // Rutas sin rate limiting específico

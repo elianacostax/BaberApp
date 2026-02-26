@@ -1,34 +1,39 @@
 const Barbershop = require("../models/Barbershop");
 const User = require("../models/User");
 const { handleError } = require("../utils/errorHandler");
+const { randomUUID } = require("crypto");
 
 // Obtener todos los servicios disponibles para un barbero (barbería + personalizados)
 const getBarberServices = async (req, res) => {
     try {
         const barberId = req.user.id;
-        const barber = await User.findById(barberId).populate('barbershop');
+        const barber = await User.findByPk(barberId);
         
         if (!barber || barber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
-        if (!barber.barbershop) {
+        if (!barber.barbershopId) {
             return res.status(400).json({ message: "El barbero no está asignado a ninguna barbería" });
         }
 
-        const barbershop = barber.barbershop;
+        const barbershop = await Barbershop.findByPk(barber.barbershopId);
+        if (!barbershop) {
+            return res.status(404).json({ message: "Barbería no encontrada" });
+        }
         
-        // Servicios de la barbería (con precios personalizados si existen)
+        // Servicios de la barbería (solo los activados por el barbero)
         const barbershopServices = barbershop.services.map(service => {
-            const customPrice = barber.customPrices.get(service._id.toString());
+            const serviceId = service.id || service._id;
+            const customPrice = barber.customPrices?.[serviceId];
             return {
-                _id: service._id,
+                _id: serviceId,
                 name: service.name,
                 description: service.description,
                 price: customPrice ? customPrice.price : service.price,
                 duration: service.duration,
                 category: service.category,
-                isActive: customPrice ? customPrice.isActive : service.isActive,
+                isActive: customPrice ? customPrice.isActive : false,
                 isRequired: service.isRequired,
                 source: 'barbershop', // Indica que viene de la barbería
                 hasCustomPrice: !!customPrice
@@ -37,7 +42,7 @@ const getBarberServices = async (req, res) => {
 
         // Servicios personalizados del barbero
         const customServices = barber.customServices.map(service => ({
-            _id: service._id,
+            _id: service._id || service.id,
             name: service.name,
             description: service.description,
             price: service.price,
@@ -54,11 +59,11 @@ const getBarberServices = async (req, res) => {
         res.json({
             services: allServices,
             barbershop: {
-                _id: barbershop._id,
+                _id: barbershop.id,
                 name: barbershop.name
             },
             barber: {
-                _id: barber._id,
+                _id: barber.id,
                 name: barber.name
             }
         });
@@ -77,7 +82,7 @@ const getAvailableServices = async (req, res) => {
             return res.status(400).json({ message: "ID de barbería es obligatorio" });
         }
 
-        const barbershop = await Barbershop.findById(barbershopId);
+        const barbershop = await Barbershop.findByPk(barbershopId);
         if (!barbershop) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
@@ -86,9 +91,9 @@ const getAvailableServices = async (req, res) => {
 
         if (barberId) {
             // Servicios específicos de un barbero
-            const barber = await User.findById(barberId).populate('barbershop');
+            const barber = await User.findByPk(barberId);
             
-            if (!barber || barber.role !== 'barber' || barber.barbershop._id.toString() !== barbershopId) {
+            if (!barber || barber.role !== 'barber' || barber.barbershopId?.toString() !== barbershopId) {
                 return res.status(404).json({ message: "Barbero no encontrado en esta barbería" });
             }
 
@@ -96,9 +101,11 @@ const getAvailableServices = async (req, res) => {
             const barbershopServices = barbershop.services
                 .filter(service => service.isActive)
                 .map(service => {
-                    const customPrice = barber.customPrices.get(service._id.toString());
+                    const serviceId = service.id || service._id;
+                    const customPrice = barber.customPrices?.[serviceId];
+                    if (!customPrice || !customPrice.isActive) return null;
                     return {
-                        _id: service._id,
+                        _id: serviceId,
                         name: service.name,
                         description: service.description,
                         price: customPrice ? customPrice.price : service.price,
@@ -107,13 +114,14 @@ const getAvailableServices = async (req, res) => {
                         source: 'barbershop',
                         hasCustomPrice: !!customPrice
                     };
-                });
+                })
+                .filter(Boolean);
 
             // Servicios personalizados del barbero
             const customServices = barber.customServices
                 .filter(service => service.isActive)
                 .map(service => ({
-                    _id: service._id,
+                    _id: service._id || service.id,
                     name: service.name,
                     description: service.description,
                     price: service.price,
@@ -124,11 +132,11 @@ const getAvailableServices = async (req, res) => {
 
             services = [...barbershopServices, ...customServices];
         } else {
-            // Servicios generales de la barbería
+            // Servicios generales de la barbería (sin barbero específico)
             services = barbershop.services
                 .filter(service => service.isActive)
                 .map(service => ({
-                    _id: service._id,
+                    _id: service.id || service._id,
                     name: service.name,
                     description: service.description,
                     price: service.price,
@@ -155,7 +163,7 @@ const createCustomService = async (req, res) => {
             return res.status(400).json({ message: "Nombre, precio y duración son obligatorios" });
         }
 
-        const barber = await User.findById(barberId);
+        const barber = await User.findByPk(barberId);
         if (!barber || barber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
@@ -169,7 +177,10 @@ const createCustomService = async (req, res) => {
             return res.status(400).json({ message: "Ya existe un servicio personalizado con este nombre" });
         }
 
+        const id = randomUUID();
         const newService = {
+            id,
+            _id: id,
             name,
             description: description || '',
             price,
@@ -178,10 +189,12 @@ const createCustomService = async (req, res) => {
             isActive: true
         };
 
-        barber.customServices.push(newService);
+        const customServices = barber.customServices || [];
+        customServices.push(newService);
+        barber.customServices = customServices;
         await barber.save();
 
-        const createdService = barber.customServices[barber.customServices.length - 1];
+        const createdService = newService;
 
         res.status(201).json({
             message: "Servicio personalizado creado correctamente",
@@ -200,23 +213,27 @@ const updateCustomService = async (req, res) => {
         const { serviceId } = req.params;
         const { name, description, price, duration, category, isActive } = req.body;
 
-        const barber = await User.findById(barberId);
+        const barber = await User.findByPk(barberId);
         if (!barber || barber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
-        const service = barber.customServices.id(serviceId);
-        if (!service) {
+        const customServices = barber.customServices || [];
+        const serviceIndex = customServices.findIndex(s => (s.id || s._id) === serviceId);
+        if (serviceIndex === -1) {
             return res.status(404).json({ message: "Servicio personalizado no encontrado" });
         }
 
         // Actualizar campos si se proporcionan
+        const service = { ...customServices[serviceIndex] };
         if (name !== undefined) service.name = name;
         if (description !== undefined) service.description = description;
         if (price !== undefined) service.price = price;
         if (duration !== undefined) service.duration = duration;
         if (category !== undefined) service.category = category;
         if (isActive !== undefined) service.isActive = isActive;
+        customServices[serviceIndex] = service;
+        barber.customServices = customServices;
 
         await barber.save();
 
@@ -236,17 +253,18 @@ const deleteCustomService = async (req, res) => {
         const barberId = req.user.id;
         const { serviceId } = req.params;
 
-        const barber = await User.findById(barberId);
+        const barber = await User.findByPk(barberId);
         if (!barber || barber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
-        const service = barber.customServices.id(serviceId);
-        if (!service) {
+        const customServices = barber.customServices || [];
+        const exists = customServices.some(s => (s.id || s._id) === serviceId);
+        if (!exists) {
             return res.status(404).json({ message: "Servicio personalizado no encontrado" });
         }
 
-        barber.customServices.pull(serviceId);
+        barber.customServices = customServices.filter(s => (s.id || s._id) !== serviceId);
         await barber.save();
 
         res.json({ message: "Servicio personalizado eliminado correctamente" });
@@ -267,27 +285,30 @@ const setCustomPrice = async (req, res) => {
             return res.status(400).json({ message: "Precio válido es obligatorio" });
         }
 
-        const barber = await User.findById(barberId);
+        const barber = await User.findByPk(barberId);
         if (!barber || barber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
         // Verificar que el servicio existe en la barbería
-        const barbershop = await Barbershop.findById(barber.barbershop);
+        const barbershop = barber.barbershopId ? await Barbershop.findByPk(barber.barbershopId) : null;
         if (!barbershop) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
 
-        const service = barbershop.services.id(serviceId);
+        const services = barbershop.services || [];
+        const service = services.find(s => (s.id || s._id) === serviceId);
         if (!service) {
             return res.status(404).json({ message: "Servicio de barbería no encontrado" });
         }
 
         // Establecer precio personalizado
-        barber.customPrices.set(serviceId, {
+        const customPrices = { ...(barber.customPrices || {}) };
+        customPrices[serviceId] = {
             price,
             isActive: isActive !== undefined ? isActive : true
-        });
+        };
+        barber.customPrices = customPrices;
 
         await barber.save();
 
@@ -313,16 +334,18 @@ const removeCustomPrice = async (req, res) => {
         const barberId = req.user.id;
         const { serviceId } = req.params;
 
-        const barber = await User.findById(barberId);
+        const barber = await User.findByPk(barberId);
         if (!barber || barber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
-        if (!barber.customPrices.has(serviceId)) {
+        const customPrices = { ...(barber.customPrices || {}) };
+        if (!customPrices[serviceId]) {
             return res.status(404).json({ message: "Precio personalizado no encontrado" });
         }
 
-        barber.customPrices.delete(serviceId);
+        delete customPrices[serviceId];
+        barber.customPrices = customPrices;
         await barber.save();
 
         res.json({ message: "Precio personalizado eliminado correctamente" });

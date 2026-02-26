@@ -7,7 +7,9 @@ const protect = async (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.id).select("-password");
+        const user = await User.findByPk(decoded.id, {
+            attributes: { exclude: ["password"] }
+        });
 
         if (!user) {
             return res.status(404).json({ message: "Usuario no encontrado" });
@@ -15,7 +17,6 @@ const protect = async (req, res, next) => {
 
         req.user = {
             id: decoded.id,
-            //role: decoded.role,
             role: user.role,
         }; // queda disponible para controladores
 

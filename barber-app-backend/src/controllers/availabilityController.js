@@ -1,5 +1,6 @@
 const AvailabilityBlock = require("../models/AvailabilityBlock");
 const { handleError } = require("../utils/errorHandler");
+const { Op } = require("sequelize");
 
 // Crear un nuevo bloqueo
 const createAvailabilityBlock = async (req, res) => {
@@ -15,17 +16,15 @@ const createAvailabilityBlock = async (req, res) => {
             return res.status(400).json({ message: "La fecha de fin debe ser posterior a la de inicio" });
         }
 
-        const block = new AvailabilityBlock({
+        const block = await AvailabilityBlock.create({
             start,
             end,
             reason,
-            type,
-            createdBy: userId,
+            createdById: userId,
             appliesToAllBarbers,
-            barber: appliesToAllBarbers ? null : (barber || userId)
+            barberId: appliesToAllBarbers ? null : (barber || userId)
         });
 
-        await block.save();
         res.status(201).json({ message: "Bloqueo creado correctamente", block });
     } catch (err) {
         handleError(res, 'Error al crear bloqueo', 500, err);
@@ -36,16 +35,21 @@ const createAvailabilityBlock = async (req, res) => {
 const getAvailabilityBlocks = async (req, res) => {
     try {
         const { barberId } = req.query;
-        const query = {};
+        let where = {};
 
         if (barberId) {
-            query.$or = [
-                { appliesToAllBarbers: true },
-                { barber: barberId }
-            ];
+            where = {
+                [Op.or]: [
+                    { appliesToAllBarbers: true },
+                    { barberId: barberId }
+                ]
+            };
         }
 
-        const blocks = await AvailabilityBlock.find(query).sort({ start: 1 });
+        const blocks = await AvailabilityBlock.findAll({
+            where,
+            order: [["start", "ASC"]]
+        });
         res.status(200).json(blocks);
     } catch (err) {
         handleError(res, 'Error al obtener bloqueos', 500, err);
@@ -58,26 +62,29 @@ const updateAvailabilityBlock = async (req, res) => {
         const { id } = req.params;
         const update = req.body;
 
-        const updatedBlock = await AvailabilityBlock.findByIdAndUpdate(id, update, { new: true });
-
-        if (!updatedBlock) {
-            return res.status(404).json({ message: "Bloqueo no encontrado" });
-        }
-
         //Evita que un barbero elimine bloqueos de otro.
-        const block = await AvailabilityBlock.findById(id);
+        const block = await AvailabilityBlock.findByPk(id);
         if (!block) {
             return res.status(404).json({ message: "Bloqueo no encontrado" });
         }
 
-        const isOwner = block.createdBy.toString() === req.user.id;
+        const isOwner = block.createdById === req.user.id;
         const isAdmin = req.user.role === "admin";
 
         if (!isOwner && !isAdmin) {
             return res.status(403).json({ message: "No autorizado para modificar este bloqueo" });
         }
 
-        res.status(200).json({ message: "Bloqueo actualizado", block: updatedBlock });
+        // Actualizar campos permitidos
+        if (update.start !== undefined) block.start = update.start;
+        if (update.end !== undefined) block.end = update.end;
+        if (update.reason !== undefined) block.reason = update.reason;
+        if (update.appliesToAllBarbers !== undefined) block.appliesToAllBarbers = update.appliesToAllBarbers;
+        if (update.barberId !== undefined) block.barberId = update.barberId;
+
+        await block.save();
+
+        res.status(200).json({ message: "Bloqueo actualizado", block });
     } catch (err) {
         handleError(res, 'Error al actualizar bloqueo', 500, err);
     }
@@ -89,19 +96,19 @@ const deleteAvailabilityBlock = async (req, res) => {
         const { id } = req.params;
 
         // Verificar permisos ANTES de eliminar
-        const block = await AvailabilityBlock.findById(id);
+        const block = await AvailabilityBlock.findByPk(id);
         if (!block) {
             return res.status(404).json({ message: "Bloqueo no encontrado" });
         }
 
-        const isOwner = block.createdBy.toString() === req.user.id;
+        const isOwner = block.createdById === req.user.id;
         const isAdmin = req.user.role === "admin";
 
         if (!isOwner && !isAdmin) {
             return res.status(403).json({ message: "No autorizado para eliminar este bloqueo" });
         }
 
-        await AvailabilityBlock.findByIdAndDelete(id);
+        await block.destroy();
 
         res.status(200).json({ message: "Bloqueo eliminado correctamente" });
     } catch (err) {

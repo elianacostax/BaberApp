@@ -17,7 +17,7 @@ const { validateSchema, schemas } = require("../middlewares/validateBody");
 router.get("/barber", protect, authorizeRoles("barber"), getBarberServices);
 
 // Obtener servicios disponibles para reserva (cliente)
-router.get("/available", protect, getAvailableServices);
+router.get("/available", getAvailableServices);
 
 // Crear servicio personalizado (barbero)
 router.post("/custom", protect, authorizeRoles("barber"), validateSchema(schemas.customServiceCreate), createCustomService);

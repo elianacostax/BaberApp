@@ -1,75 +1,94 @@
-const mongoose = require("mongoose");
+const { DataTypes } = require("sequelize");
+const { sequelize } = require("../config/db");
 
-const barbershopSchema = new mongoose.Schema(
-    {
-        name: { type: String, required: true },
-        address: { type: String, required: true },
-        location: { type: String, required: true }, // Ciudad o zona
-        phone: { type: String }, // Campo útil para contacto
-        owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-        services: [
-            {
-                name: { 
-                    type: String, 
-                    required: true,
-                    minlength: [2, 'El nombre del servicio debe tener al menos 2 caracteres'],
-                    maxlength: [50, 'El nombre del servicio no puede tener más de 50 caracteres']
-                },
-                description: {
-                    type: String,
-                    maxlength: [200, 'La descripción no puede tener más de 200 caracteres'],
-                    default: ''
-                },
-                price: { 
-                    type: Number, 
-                    required: true, 
-                    min: [0, 'El precio no puede ser negativo'] 
-                },
-                duration: { 
-                    type: Number, 
-                    required: true, 
-                    min: [15, 'La duración mínima es 15 minutos'] 
-                },
-                category: {
-                    type: String,
-                    enum: ['haircut', 'beard', 'styling', 'treatment', 'other'],
-                    default: 'other'
-                },
-                isActive: {
-                    type: Boolean,
-                    default: true
-                },
-                isRequired: {
-                    type: Boolean,
-                    default: false // Si es true, todos los barberos deben ofrecerlo
-                }
-            }
-        ],
-        // CORREGIDO: objeto en lugar de array
-        openingHours: {
-            openHour: { type: Number, required: true, default: 9, min: 0, max: 23 },
-            closeHour: { type: Number, required: true, default: 18, min: 1, max: 23 }
-        },
-        // Campos adicionales útiles
-        isActive: { type: Boolean, default: true },
-        description: { type: String, maxlength: 500 },
-        images: [String], // URLs de imágenes de la barbería
+const Barbershop = sequelize.define(
+  "Barbershop",
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
     },
-    { timestamps: true }
+                name: { 
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    address: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    location: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      comment: "Ciudad o zona",
+    },
+    phone: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    ownerId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+    },
+    services: {
+      type: DataTypes.JSONB,
+      defaultValue: [],
+      comment: "Array de servicios de la barbería",
+    },
+    openingHours: {
+      type: DataTypes.JSONB,
+      allowNull: false,
+      defaultValue: {
+        openHour: 9,
+        closeHour: 18,
+      },
+      validate: {
+        isValidHours(value) {
+          if (value.openHour >= value.closeHour) {
+            throw new Error(
+              "La hora de apertura debe ser menor que la de cierre"
+            );
+          }
+          if (
+            value.openHour < 0 ||
+            value.openHour > 23 ||
+            value.closeHour < 1 ||
+            value.closeHour > 23
+          ) {
+            throw new Error("Las horas deben estar entre 0 y 23");
+          }
+        },
+      },
+    },
+    isActive: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+    },
+    description: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    images: {
+      type: DataTypes.ARRAY(DataTypes.TEXT),
+      defaultValue: [],
+      comment: "URLs de imágenes de la barbería",
+    },
+  },
+  {
+    tableName: "Barbershops",
+    timestamps: true,
+    indexes: [
+      { fields: ["ownerId"] },
+      { fields: ["isActive"] },
+      // Índice de texto simple (sin pg_trgm por ahora)
+      { fields: ["name"] },
+      { fields: ["address"] },
+    ],
+  }
 );
 
-// Validación personalizada para horarios
-barbershopSchema.pre('save', function(next) {
-    if (this.openingHours.openHour >= this.openingHours.closeHour) {
-        const error = new Error('La hora de apertura debe ser menor que la de cierre');
-        return next(error);
-    }
-    next();
-});
-
-// Índices para optimización de consultas
-barbershopSchema.index({ owner: 1 }); // Para consultas por propietario
-barbershopSchema.index({ isActive: 1 }); // Para consultas por estado activo
-barbershopSchema.index({ name: 'text', address: 'text', description: 'text' }); // Índice de texto para búsquedas
-
-module.exports = mongoose.model("Barbershop", barbershopSchema);
+module.exports = Barbershop;

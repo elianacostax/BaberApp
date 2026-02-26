@@ -1,50 +1,116 @@
+const { DataTypes } = require("sequelize");
+const { sequelize } = require("../config/db");
 
-const mongoose = require("mongoose");
-
-
-
-
-
-const bookingSchema = new mongoose.Schema({
-    barbershop: { type: mongoose.Schema.Types.ObjectId, ref: 'Barbershop', required: true },
-    barber: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-
-    serviceName: { type: String, required: true },
-    servicePrice: { type: Number, required: true },
-    serviceDuration: { type: Number, required: true },
-
-    date: { type: String, required: true },
-    time: { type: String, required: true },
-    startTime: { type: Date, required: true },
-    endTime: { type: Date, required: true },
-
+const Booking = sequelize.define(
+  "Booking",
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    barbershopId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: "Barbershops",
+        key: "id",
+      },
+    },
+    barberId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+    },
+    userId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+      comment: "Opcional para walk-in",
+    },
+    serviceName: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    servicePrice: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: false,
+    },
+    serviceDuration: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      comment: "Duración en minutos",
+    },
+    date: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      comment: "Fecha en formato string",
+    },
+    time: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      comment: "Hora en formato string",
+    },
+    startTime: {
+      type: DataTypes.DATE,
+      allowNull: false,
+    },
+    endTime: {
+      type: DataTypes.DATE,
+      allowNull: false,
+    },
     status: {
-        type: String,
-        enum: ["pending", "confirmed", "cancelled", "completed"],
-        default: "pending"
+      type: DataTypes.ENUM("pending", "confirmed", "cancelled", "completed"),
+      defaultValue: "pending",
     },
-
-        // Campos para auditoría
-    createdBy: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'User', 
-        required: false // Solo se llena cuando la crea un barbero/admin
+    walkInClient: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: null,
+      comment: "Datos del cliente walk-in",
     },
-    modifiedBy: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'User', 
-        required: false // Solo se llena cuando se modifica
+    notes: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: "",
     },
+    createdById: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+      comment: "Usuario que creó la reserva",
+    },
+    modifiedById: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "Users",
+        key: "id",
+      },
+      comment: "Usuario que modificó la reserva",
+    },
+  },
+  {
+    tableName: "Bookings",
+    timestamps: true,
+    indexes: [
+      { fields: ["barberId", "date"] },
+      { fields: ["userId", "date"] },
+      { fields: ["barbershopId", "date"] },
+      { fields: ["startTime", "endTime"] },
+      { fields: ["status", "date"] },
+      { fields: ["createdAt"], order: "DESC" },
+    ],
+  }
+);
 
-}, { timestamps: true });
-
-// Índices para optimización de consultas
-bookingSchema.index({ barber: 1, date: 1 }); // Para consultas por barbero y fecha
-bookingSchema.index({ user: 1, date: 1 }); // Para consultas por usuario y fecha
-bookingSchema.index({ barbershop: 1, date: 1 }); // Para consultas por barbería y fecha
-bookingSchema.index({ startTime: 1, endTime: 1 }); // Para consultas de solapamiento
-bookingSchema.index({ status: 1, date: 1 }); // Para consultas por estado y fecha
-bookingSchema.index({ createdAt: -1 }); // Para ordenamiento por fecha de creación
-
-module.exports = mongoose.model('Booking', bookingSchema);
+module.exports = Booking;

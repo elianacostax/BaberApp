@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Barbershop = require('../models/Barbershop');
 const { handleError } = require('../utils/errorHandler');
 
 //Actualizar horario de barbero
@@ -13,9 +14,27 @@ const updateUserSchedule = async (req, res) => {
       return res.status(400).json({ message: 'El horario es requerido' });
     }
 
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user || user.role !== 'barber') {
       return res.status(403).json({ message: 'No autorizado' });
+    }
+
+    // Validar contra horario de barbería si existe
+    if (user.barbershopId) {
+      const shop = await Barbershop.findByPk(user.barbershopId);
+      if (shop && shop.openingHours) {
+        const { openHour, closeHour } = shop.openingHours;
+        for (const [day, hours] of Object.entries(schedule)) {
+          if (!hours || !hours.start || !hours.end) continue;
+          const [sh, sm] = hours.start.split(':').map(Number);
+          const [eh, em] = hours.end.split(':').map(Number);
+          if (sh < openHour || eh > closeHour || (eh === closeHour && em > 0)) {
+            return res.status(400).json({
+              message: `El día ${day} debe estar entre ${String(openHour).padStart(2,'0')}:00 y ${String(closeHour).padStart(2,'0')}:00`
+            });
+          }
+        }
+      }
     }
 
     user.schedule = schedule;
@@ -33,7 +52,7 @@ const updateBarberProfile = async (req, res) => {
     const userId = req.user.id;
     const { photo, bio, services, barbershop } = req.body;
 
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user || user.role !== 'barber') {
       return res.status(403).json({ message: 'No autorizado' });
     }
@@ -41,7 +60,7 @@ const updateBarberProfile = async (req, res) => {
     //Validaciones
     if (photo !== undefined) user.photo = photo;
     if (bio !== undefined) user.bio = bio;
-    if (barbershop !== undefined) user.barbershop = barbershop;
+    if (barbershop !== undefined) user.barbershopId = barbershop;
 
     //Validar servicios si se envian
     if (services !== undefined) {
@@ -50,13 +69,15 @@ const updateBarberProfile = async (req, res) => {
       }
     }
 
-    for (const service of services) {
+    for (const service of services || []) {
       if (!service.name || typeof service.duration !== 'number' || typeof service.price !== 'number') {
         return res.status(400).json({ message: 'Cada servicio debe tener nombre, duración (min) y precio' });
       }
     }
 
-    user.services = services;
+    if (services !== undefined) {
+      user.customServices = services;
+    }
 
     await user.save();
     res.status(200).json({ message: 'Perfil actualizado correctamente', user });
@@ -70,9 +91,14 @@ const getUserProfile = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const user = await User.findById(id)
-      .select("-password -__v") // oculta password y versión
-      .populate("barbershop", "name address phone openingHours"); // incluye openingHours
+    const user = await User.findByPk(id, {
+      attributes: { exclude: ["password"] },
+      include: [{
+        model: Barbershop,
+        as: "barbershop",
+        attributes: ["id", "name", "address", "phone", "openingHours"]
+      }]
+    });
 
     if (!user) {
       return res.status(404).json({ message: "Usuario no encontrado" });
@@ -94,15 +120,23 @@ const addBlockedTime = async (req, res) => {
       return res.status(400).json({ message: "Inicio y fin del bloqueo son obligatorios" });
     }
 
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user || user.role !== 'barber') {
       return res.status(403).json({ message: "No autorizado" });
     }
 
-    user.blockedTimes.push({ start: new Date(start), end: new Date(end), reason });
-    await user.save();
+    // Nota: Este método usa AvailabilityBlock en lugar de blockedTimes en el usuario
+    // Se mantiene por compatibilidad pero debería usar el controlador de AvailabilityBlock
+    const AvailabilityBlock = require('../models/AvailabilityBlock');
+    await AvailabilityBlock.create({
+      barberId: userId,
+      start: new Date(start),
+      end: new Date(end),
+      reason: reason || 'manual',
+      createdById: userId
+    });
 
-    res.status(200).json({ message: "Bloqueo registrado exitosamente", blockedTimes: user.blockedTimes });
+    res.status(200).json({ message: "Bloqueo registrado exitosamente" });
   } catch (err) {
     handleError(res, 'Error al agregar bloqueo', 500, err);
 }
@@ -115,17 +149,85 @@ module.exports = {
   addBlockedTime
 };
 
-// Listar usuarios con filtros opcionales (rol, barbería)
+// Listar usuarios con filtros opcionales (rol, barbería, estado)
 module.exports.listUsers = async (req, res) => {
   try {
-    const { role, barbershop } = req.query;
-    const query = {};
-    if (role) query.role = role;
-    if (barbershop) query.barbershop = barbershop;
+    const { role, barbershop, isActive } = req.query;
+    const where = {};
+    if (role) where.role = role;
+    if (barbershop) where.barbershopId = barbershop;
+    if (typeof isActive !== 'undefined') where.isActive = isActive === 'true';
 
-    const users = await User.find(query).select('-password -__v');
+    const users = await User.findAll({
+      where,
+      attributes: { exclude: ["password"] },
+      include: [{
+        model: Barbershop,
+        as: "barbershop",
+        attributes: ["id", "name", "location"]
+      }]
+    });
     res.json(users);
   } catch (err) {
     handleError(res, 'Error al listar usuarios', 500, err);
+  }
+};
+
+// Obtener favoritos del usuario autenticado
+module.exports.getMyFavorites = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
+
+    const prefs = user.preferences || { favoriteBarbers: [], favoriteBarbershops: [] };
+    res.json({
+      favoriteBarbers: Array.isArray(prefs.favoriteBarbers) ? prefs.favoriteBarbers : [],
+      favoriteBarbershops: Array.isArray(prefs.favoriteBarbershops) ? prefs.favoriteBarbershops : []
+    });
+  } catch (err) {
+    handleError(res, 'Error al obtener favoritos', 500, err);
+  }
+};
+
+// Actualizar favoritos (toggle o set)
+module.exports.updateMyFavorites = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { type, id, favorite } = req.body;
+
+    if (!['barber', 'barbershop'].includes(type) || !id) {
+      return res.status(400).json({ message: "Tipo o id inválidos" });
+    }
+
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
+
+    const prefs = user.preferences || { favoriteBarbers: [], favoriteBarbershops: [] };
+    const key = type === 'barber' ? 'favoriteBarbers' : 'favoriteBarbershops';
+    const current = new Set(Array.isArray(prefs[key]) ? prefs[key] : []);
+
+    const shouldFavorite = typeof favorite === 'boolean' ? favorite : !current.has(id);
+    if (shouldFavorite) {
+      current.add(id);
+    } else {
+      current.delete(id);
+    }
+
+    const nextPrefs = {
+      ...prefs,
+      [key]: Array.from(current)
+    };
+
+    user.preferences = nextPrefs;
+    await user.save();
+
+    res.json({
+      message: "Favoritos actualizados",
+      favoriteBarbers: nextPrefs.favoriteBarbers || [],
+      favoriteBarbershops: nextPrefs.favoriteBarbershops || []
+    });
+  } catch (err) {
+    handleError(res, 'Error al actualizar favoritos', 500, err);
   }
 };

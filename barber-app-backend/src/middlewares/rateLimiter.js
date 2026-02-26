@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 // Rate limiter general para la API
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // máximo 100 requests por IP por ventana
+  max: 500, // máximo 500 requests por IP por ventana (aumentado para desarrollo)
   message: {
     error: 'Demasiadas solicitudes desde esta IP, intenta de nuevo en 15 minutos.'
   },
@@ -65,14 +65,14 @@ const staffBookingLimiter = rateLimit({
 
 // Rate limiter para operaciones de administración
 const adminLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hora
-  max: 50, // máximo 50 operaciones admin por IP por hora
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 200, // máximo 200 operaciones admin por IP por 15 minutos
   message: {
-    error: 'Demasiadas operaciones de administración, intenta de nuevo en una hora.'
+    error: 'Demasiadas operaciones de administración, intenta de nuevo en 15 minutos.'
   },
   handler: (req, res) => {
     res.status(429).json({
-      message: 'Demasiadas operaciones de administración, intenta de nuevo en una hora.',
+      message: 'Demasiadas operaciones de administración, intenta de nuevo en 15 minutos.',
       retryAfter: Math.round(req.rateLimit.resetTime / 1000)
     });
   }
