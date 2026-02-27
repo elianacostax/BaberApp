@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Barbería Premium Design System - All colors MUST be HSL */
+
+@layer base {
+  :root {
+    /* Base colors - Dark elegant theme */
+    --background: 0 0% 7%;
+    --foreground: 0 0% 98%;
+
+    /* Card system */
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 95%;
+
+    /* Popover system */
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    /* Primary - Elegant gold/copper */
+    --primary: 35 85% 55%;
+    --primary-foreground: 0 0% 7%;
+    --primary-glow: 35 85% 65%;
+
+    /* Secondary - Sophisticated dark */
+    --secondary: 0 0% 18%;
+    --secondary-foreground: 0 0% 90%;
+
+    /* Muted tones */
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 65%;
+
+    /* Accent - Premium gold */
+    --accent: 35 85% 55%;
+    --accent-foreground: 0 0% 7%;
+
+    /* Destructive - Professional red */
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 98%;
+
+    /* Border and input */
+    --border: 0 0% 25%;
+    --input: 0 0% 18%;
+    --ring: 35 85% 55%;
+
+    --radius: 0.75rem;
+
+    /* Success state */
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 98%;
+
+    /* Warning state */
+    --warning: 45 95% 55%;
+    --warning-foreground: 0 0% 7%;
+
+    /* Premium gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
+    --gradient-premium: linear-gradient(135deg, hsl(35 85% 45%), hsl(35 85% 65%));
+    --gradient-dark: linear-gradient(135deg, hsl(0 0% 10%), hsl(0 0% 15%));
+
+    /* Shadows */
+    --shadow-premium: 0 25px 50px -12px hsl(35 85% 55% / 0.25);
+    --shadow-card: 0 10px 30px -10px hsl(0 0% 0% / 0.3);
+    --shadow-glow: 0 0 30px hsl(35 85% 55% / 0.2);
+
+    /* Sidebar customization */
+    --sidebar-background: 0 0% 8%;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 35 85% 55%;
+    --sidebar-primary-foreground: 0 0% 7%;
+    --sidebar-accent: 0 0% 15%;
+    --sidebar-accent-foreground: 0 0% 85%;
+    --sidebar-border: 0 0% 20%;
+    --sidebar-ring: 35 85% 55%;
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-spring: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  /* Premium button variants */
+  .btn-premium {
+    @apply bg-gradient-to-r from-primary to-primary-glow text-primary-foreground;
+    @apply hover:shadow-[var(--shadow-premium)] transition-all duration-300;
+    @apply font-semibold tracking-wide;
+  }
+
+  .btn-ghost-premium {
+    @apply border border-primary/30 text-primary hover:bg-primary/10;
+    @apply transition-all duration-300 hover:border-primary/50;
+  }
+
+  /* Card components */
+  .card-premium {
+    @apply bg-gradient-to-br from-card to-card/80 border border-border/50;
+    @apply shadow-[var(--shadow-card)] backdrop-blur-sm;
+  }
+
+  .card-glass {
+    @apply bg-card/60 border border-border/30 backdrop-blur-md;
+    @apply shadow-[var(--shadow-card)];
+  }
+
+  /* Input variants */
+  .input-premium {
+    @apply bg-input/80 border-border/50 focus:border-primary/50;
+    @apply focus:ring-2 focus:ring-primary/20 transition-all duration-200;
+  }
+
+  /* Navigation states */
+  .nav-active {
+    @apply bg-primary/15 text-primary border-r-2 border-primary;
+    @apply shadow-[var(--shadow-glow)];
+  }
+
+  /* Animations */
+  .animate-fade-in {
+    animation: fadeIn 0.4s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}

@@ -110,8 +110,13 @@ const getBarbers = async (req, res) => {
 // Obtener ubicaciones de barberías para filtros
 const getBarberLocations = async (req, res) => {
     try {
-        const locations = await Barbershop.distinct('location');
-        res.json(locations);
+        const locations = await Barbershop.findAll({
+            attributes: ['location'],
+            where: { location: { [Op.ne]: null } },
+            group: ['location'],
+            raw: true
+        });
+        res.json(locations.map((row) => row.location));
     } catch (err) {
         handleError(res, 'Error al obtener ubicaciones', 500, err);
     }

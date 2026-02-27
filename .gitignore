@@ -2,3 +2,16 @@ node_modules/
 .env
 dist/
 build/
+.DS_Store
+*.log
+
+# Frontend
+barber-app-frontend/node_modules/
+barber-app-frontend/dist/
+
+# Backend
+barber-app-backend/node_modules/
+barber-app-backend/logs/
+
+# Env
+.env
