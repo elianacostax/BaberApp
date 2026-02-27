@@ -404,7 +404,7 @@ export default function AdminBookingsManagement() {
 
   const exportBookings = () => {
     // Implementar exportación de reservas
-    console.log('Exporting bookings...');
+    return;
   };
 
   return (

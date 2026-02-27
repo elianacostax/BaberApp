@@ -8,11 +8,10 @@ import { api } from "@/lib/api";
 import { getId } from "@/lib/id";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
-import { DateInput } from "@/components/ui/date-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { EnhancedCard } from "@/components/ui/enhanced-card";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import BookAppointment from "../book/BookAppointment";
 
 // Removed hardcoded data - will use real data from API
@@ -72,7 +71,6 @@ const formatTime = (timeString: string) => {
     // Intentar crear fecha con la hora
     const date = new Date(`2000-01-01T${timeString}`);
     if (isNaN(date.getTime())) {
-      console.warn('Hora inválida:', timeString);
       return timeString; // Devolver el string original si no se puede formatear
     }
     
@@ -81,7 +79,6 @@ const formatTime = (timeString: string) => {
       minute: '2-digit'
     });
   } catch (error) {
-    console.warn('Error formateando hora:', error, timeString);
     return timeString; // Devolver el string original en caso de error
   }
 };
@@ -99,23 +96,12 @@ const isUpcomingAppointment = (appointment: any) => {
   // Solo mostrar reservas futuras (incluyendo hoy) y con estados activos
   const isFutureOrToday = appointmentDate >= today;
   const isActiveStatus = appointment.status === 'pending' || appointment.status === 'confirmed';
-  
-  const result = isFutureOrToday && isActiveStatus;
-  
-  // Debug: Log para cada reserva
-  console.log(`Reserva ${getId(appointment)}:`, {
-    date: appointment.date,
-    status: appointment.status,
-    isFutureOrToday,
-    isActiveStatus,
-    result
-  });
-  
-  return result;
+
+  return isFutureOrToday && isActiveStatus;
 };
 
 export default function ClientDashboard() {
-  const { user, isAuthenticated } = useAuth();
+  const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeModule, setActiveModule] = useState<string>('overview');
@@ -133,18 +119,7 @@ export default function ClientDashboard() {
   const [filterDate, setFilterDate] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [showBookingForm, setShowBookingForm] = useState<boolean>(false);
-  
-  // Estados para el formulario de reserva
-  const [selectedShop, setSelectedShop] = useState<string>('');
-  const [selectedService, setSelectedService] = useState<string>('');
-  const [selectedBarber, setSelectedBarber] = useState<string>('');
-  const [bookingDate, setBookingDate] = useState<string>('');
-  const [bookingTime, setBookingTime] = useState<string>('');
-  const [selectedSlot, setSelectedSlot] = useState<string>('');
-  const [bookingShopSearch, setBookingShopSearch] = useState<string>('');
-  const [bookingBarberSearch, setBookingBarberSearch] = useState<string>('');
-  const [onlyFavoriteBookingShops, setOnlyFavoriteBookingShops] = useState<boolean>(false);
-  const [onlyFavoriteBookingBarbers, setOnlyFavoriteBookingBarbers] = useState<boolean>(false);
+  const [bookingPrefill, setBookingPrefill] = useState<{ barbershopId?: string; barberId?: string }>({});
   const [favoritesSearch, setFavoritesSearch] = useState<string>('');
   const [onlyFavorites, setOnlyFavorites] = useState<boolean>(false);
 
@@ -155,29 +130,6 @@ export default function ClientDashboard() {
       const r = await api.get('/api/barbershops');
       return r.data as Array<{ id?: string; _id?: string; name: string; location?: string; address?: string }>;
     },
-  });
-
-  const { data: services } = useQuery({
-    queryKey: ['services', selectedShop, selectedBarber],
-    queryFn: async () => {
-      if (!selectedShop) return [];
-      const params = new URLSearchParams({ barbershopId: selectedShop });
-      if (selectedBarber) params.append('barberId', selectedBarber);
-      
-      const r = await api.get(`/api/services/available?${params}`);
-      return (r.data?.services ?? []) as Array<{ id?: string; _id?: string; name: string }>;
-    },
-    enabled: !!selectedShop,
-  });
-
-  const { data: barbers } = useQuery({
-    queryKey: ['barbers', selectedShop],
-    queryFn: async () => {
-      if (!selectedShop) return [];
-      const r = await api.get('/api/users', { params: { role: 'barber', barbershop: selectedShop } });
-      return r.data as Array<{ id?: string; _id?: string; name: string }>;
-    },
-    enabled: !!selectedShop,
   });
 
   const { data: allBarbers } = useQuery({
@@ -254,23 +206,6 @@ export default function ClientDashboard() {
     return sorted.slice(0, 5);
   }, [normalizedBookings]);
 
-  const { data: availability } = useQuery({
-    queryKey: ['availability', selectedShop, selectedBarber, selectedService, bookingDate],
-    queryFn: async () => {
-      if (!selectedShop || !selectedBarber || !selectedService || !bookingDate) return { availableSlots: [] };
-      const r = await api.get('/api/bookings/availability', {
-        params: {
-          barbershopId: selectedShop,
-          barberId: selectedBarber,
-          serviceId: selectedService,
-          date: bookingDate,
-        },
-      });
-      return r.data as { availableSlots: Array<{ start: string; end: string }> };
-    },
-    enabled: !!selectedShop && !!selectedBarber && !!selectedService && !!bookingDate,
-  });
-
   // Módulos de navegación para el cliente
   const modules = [
     { id: 'overview', label: 'Vista General', icon: Calendar },
@@ -301,10 +236,6 @@ export default function ClientDashboard() {
   // Filtrar solo las reservas próximas (futuras y activas)
   const upcomingAppointments = (normalizedBookings ?? []).filter(isUpcomingAppointment);
   
-  // Debug: Log de todas las reservas y las filtradas
-  console.log('Todas las reservas:', normalizedBookings);
-  console.log('Reservas próximas filtradas:', upcomingAppointments);
-  
   // Aplicar filtros adicionales a las reservas próximas
   const filtered = upcomingAppointments.filter(b => {
     const okDate = !filterDate || b.date === filterDate;
@@ -325,306 +256,6 @@ export default function ClientDashboard() {
     },
     onError: (e: any) => toast({ title: 'Error al cancelar', description: e?.response?.data?.message || 'Intenta nuevamente', variant: 'destructive' })
   });
-
-  // Mutation para crear reserva
-  const bookingMutation = useMutation({
-    mutationFn: async () => {
-      console.log('Iniciando creación de reserva...');
-      const payload = {
-        barbershop: selectedShop,
-        barber: selectedBarber,
-        serviceId: selectedService,
-        date: bookingDate,
-        time: bookingTime,
-      };
-      console.log('Payload de reserva:', payload);
-      const r = await api.post('/api/bookings', payload);
-      console.log('Respuesta de la API:', r.data);
-      return r.data;
-    },
-    onSuccess: () => {
-      toast({ title: 'Reserva creada', description: 'Tu cita fue agendada correctamente.' });
-      setSelectedService('');
-      setSelectedBarber('');
-      setBookingDate('');
-      setBookingTime('');
-      setSelectedSlot('');
-      setShowBookingForm(false);
-      
-      // Invalidar todas las queries relacionadas para actualizar todos los componentes
-      queryClient.invalidateQueries({ queryKey: ['clientBookings'] });
-      queryClient.invalidateQueries({ queryKey: ['clientRecentAppointments'] });
-      
-      // También invalidar queries de disponibilidad para refrescar horarios
-      queryClient.invalidateQueries({ queryKey: ['availability'] });
-      
-      // Invalidar queries de servicios y barberos para refrescar datos
-      queryClient.invalidateQueries({ queryKey: ['services'] });
-      queryClient.invalidateQueries({ queryKey: ['barbers'] });
-      
-      console.log('Reserva creada exitosamente - Queries invalidadas');
-    },
-    onError: (error: any) => {
-      console.error('Error al crear reserva:', error);
-      let description = 'No se pudo crear la reserva';
-      
-      if (error?.response?.status === 401) {
-        description = 'Sesión expirada. Por favor, inicia sesión nuevamente.';
-      } else if (error?.response?.status === 403) {
-        description = 'No tienes permisos para crear esta reserva.';
-      } else if (error?.response?.data?.message) {
-        description = error.response.data.message;
-      } else if (error?.message) {
-        description = error.message;
-      } // en onError, agrega esto al inicio:
-console.log('RESPUESTA BACKEND:', error?.response?.data);
-
-      
-      toast({ title: 'Error al crear reserva', description, variant: 'destructive' });
-    }
-  });
-  
-
-  // Effects para el formulario de reserva
-  useEffect(() => {
-    setSelectedService('');
-  }, [selectedShop]);
-
-  useEffect(() => {
-    if (selectedSlot) {
-      setBookingTime(selectedSlot);
-    }
-  }, [selectedSlot]);
-
-  // Slot options para el formulario de reserva
-  const slotOptions = useMemo(() => {
-    const slots = availability?.availableSlots ?? [];
-    return slots.map((s) => {
-      const d = new Date(s.start);
-      const hh = `${d.getHours()}`.padStart(2, '0');
-      const mm = `${d.getMinutes()}`.padStart(2, '0');
-      return { value: `${hh}:${mm}`, label: `${hh}:${mm}` };
-    });
-  }, [availability]);
-
-  
-
-  const renderBookingForm = () => {
-
-    const canSubmit = selectedShop && selectedService && selectedBarber && bookingDate && selectedSlot;
-
-    const favoriteShopIds = new Set(favorites?.favoriteBarbershops || []);
-    const favoriteBarberIds = new Set(favorites?.favoriteBarbers || []);
-
-    const shopOptions = (shops ?? [])
-      .map((s) => ({ id: getId(s), name: s.name }))
-      .filter((s) => s.id)
-      .filter((s) => s.name.toLowerCase().includes(bookingShopSearch.toLowerCase()))
-      .filter((s) => (onlyFavoriteBookingShops ? favoriteShopIds.has(s.id) : true))
-      .sort((a, b) => Number(favoriteShopIds.has(b.id)) - Number(favoriteShopIds.has(a.id)));
-    const serviceOptions = (services ?? []).map((s) => ({ id: getId(s), name: s.name })).filter((s) => s.id);
-    const barberOptions = (barbers ?? [])
-      .map((b) => ({ id: getId(b), name: b.name }))
-      .filter((b) => b.id)
-      .filter((b) => b.name.toLowerCase().includes(bookingBarberSearch.toLowerCase()))
-      .filter((b) => (onlyFavoriteBookingBarbers ? favoriteBarberIds.has(b.id) : true))
-      .sort((a, b) => Number(favoriteBarberIds.has(b.id)) - Number(favoriteBarberIds.has(a.id)));
-
-    console.log('renderBookingForm - Estados:', {
-      selectedShop,
-      selectedService,
-      selectedBarber,
-      bookingDate,
-      selectedSlot,
-      canSubmit,
-      shops: shopOptions.length,
-      services: serviceOptions.length,
-      barbers: barberOptions.length,
-      availability: availability?.availableSlots?.length,
-      isAuthenticated,
-      user: user?.id
-    });
-
-    // Verificar autenticación
-    if (!isAuthenticated || !user) {
-      return (
-        <div className="text-center py-8">
-          <div className="text-destructive mb-4">
-            <User className="h-12 w-12 mx-auto mb-2" />
-            <p className="text-lg font-semibold">Sesión requerida</p>
-            <p className="text-sm text-muted-foreground">
-              Debes iniciar sesión para crear una reserva
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="space-y-4">
-        {/* Indicadores de estado */}
-        <div className="text-xs text-muted-foreground space-y-1">
-          <div>Barberías: {shops ? `${shops.length} disponibles` : 'Cargando...'}</div>
-          {selectedShop && (
-            <div>Servicios: {services ? `${services.length} disponibles` : 'Cargando...'}</div>
-          )}
-          {selectedShop && (
-            <div>Barberos: {barbers ? `${barbers.length} disponibles` : 'Cargando...'}</div>
-          )}
-          {selectedShop && selectedBarber && selectedService && bookingDate && (
-            <div>Horarios: {availability ? `${availability.availableSlots?.length || 0} disponibles` : 'Cargando...'}</div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <label className="block text-sm font-medium">Barbería</label>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Buscar barbería..."
-                value={bookingShopSearch}
-                onChange={(e) => setBookingShopSearch(e.target.value)}
-              />
-              <Button
-                type="button"
-                variant={onlyFavoriteBookingShops ? "default" : "outline"}
-                onClick={() => setOnlyFavoriteBookingShops((v) => !v)}
-              >
-                <Heart className="h-4 w-4" />
-              </Button>
-            </div>
-            <Select value={selectedShop} onValueChange={setSelectedShop}>
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder="Elige barbería" />
-              </SelectTrigger>
-              <SelectContent>
-                {shopOptions.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    <span className="inline-flex items-center gap-2">
-                      {favoriteShopIds.has(s.id) && <Heart className="h-3 w-3 text-primary" />}
-                      {s.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {selectedShop && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => toggleFavorite.mutate({ type: 'barbershop', id: selectedShop })}
-              >
-                <Heart className={`h-4 w-4 mr-2 ${favoriteShopIds.has(selectedShop) ? 'text-primary' : ''}`} />
-                {favoriteShopIds.has(selectedShop) ? 'Quitar de favoritos' : 'Agregar a favoritos'}
-              </Button>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium">Servicio</label>
-            <Select value={selectedService} onValueChange={setSelectedService} disabled={!selectedShop}>
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder="Elige servicio" />
-              </SelectTrigger>
-              <SelectContent>
-                {serviceOptions.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium">Barbero</label>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Buscar barbero..."
-                value={bookingBarberSearch}
-                onChange={(e) => setBookingBarberSearch(e.target.value)}
-              />
-              <Button
-                type="button"
-                variant={onlyFavoriteBookingBarbers ? "default" : "outline"}
-                onClick={() => setOnlyFavoriteBookingBarbers((v) => !v)}
-                disabled={!selectedShop}
-              >
-                <Heart className="h-4 w-4" />
-              </Button>
-            </div>
-            <Select value={selectedBarber} onValueChange={setSelectedBarber} disabled={!selectedShop}>
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder="Elige barbero" />
-              </SelectTrigger>
-              <SelectContent>
-                {barberOptions.map((b) => (
-                  <SelectItem key={b.id} value={b.id}>
-                    <span className="inline-flex items-center gap-2">
-                      {favoriteBarberIds.has(b.id) && <Heart className="h-3 w-3 text-primary" />}
-                      {b.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {selectedBarber && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => toggleFavorite.mutate({ type: 'barber', id: selectedBarber })}
-              >
-                <Heart className={`h-4 w-4 mr-2 ${favoriteBarberIds.has(selectedBarber) ? 'text-primary' : ''}`} />
-                {favoriteBarberIds.has(selectedBarber) ? 'Quitar de favoritos' : 'Agregar a favoritos'}
-              </Button>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium">Fecha</label>
-            <div className="relative group">
-              <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none transition-colors group-focus-within:text-primary" />
-              <Input 
-                type="date" 
-                value={bookingDate} 
-                onChange={(e) => setBookingDate(e.target.value)}
-                className="h-10 pl-10"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium">Hora disponible</label>
-            <Select value={selectedSlot} onValueChange={setSelectedSlot} disabled={!bookingDate || (slotOptions.length === 0)}>
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder={bookingDate ? (slotOptions.length ? 'Elige hora' : 'Sin horarios disponibles') : 'Selecciona fecha primero'} />
-              </SelectTrigger>
-              <SelectContent>
-                {slotOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-end">
-            <Button 
-              disabled={!canSubmit || bookingMutation.isPending} 
-              onClick={() => bookingMutation.mutate()}
-              className="w-full h-10"
-            >
-              {bookingMutation.isPending ? 'Agendando...' : 'Agendar Cita'}
-            </Button>
-          </div>
-        </div>
-
-        {!canSubmit && (
-          <div className="text-center text-muted-foreground text-sm">
-            Completa todos los campos para poder agendar tu cita
-          </div>
-        )}
-      </div>
-    );
-  };
-
 
   const renderOverview = () => (
     <div className="space-y-8">
@@ -695,7 +326,7 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
       {/* Filtros */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="relative group">
-          <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none transition-colors group-focus-within:text-primary" />
+          <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-foreground pointer-events-none transition-colors group-focus-within:text-foreground" />
           <Input 
             type="date" 
             value={filterDate} 
@@ -914,13 +545,15 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
         <div className="flex gap-3">
           <Button 
             onClick={() => {
-              console.log('Botón Nueva Cita clickeado, showBookingForm:', showBookingForm);
+              if (!showBookingForm) {
+                setBookingPrefill({});
+              }
               setShowBookingForm(!showBookingForm);
             }}
             className="flex items-center gap-2"
           >
             <Plus className="h-4 w-4" />
-            {showBookingForm ? 'Ocultar Formulario' : 'Nueva Cita'}
+            {showBookingForm ? 'Ocultar Reserva' : 'Nueva Cita'}
           </Button>
         </div>
       </div>
@@ -934,11 +567,19 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
               Agendar Nueva Cita
             </CardTitle>
             <CardDescription>
-              Completa todos los campos para agendar tu cita
+              Flujo rápido e intuitivo para crear tu reserva
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {renderBookingForm()}
+            <BookAppointment
+              key={`${bookingPrefill.barbershopId ?? 'none'}-${bookingPrefill.barberId ?? 'none'}`}
+              initialBarbershopId={bookingPrefill.barbershopId}
+              initialBarberId={bookingPrefill.barberId}
+              onBooked={() => {
+                setShowBookingForm(false);
+                queryClient.invalidateQueries({ queryKey: ['clientBookings'] });
+              }}
+            />
           </CardContent>
         </EnhancedCard>
       )}
@@ -946,7 +587,7 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
       {/* Filtros */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="relative group">
-          <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none transition-colors group-focus-within:text-primary" />
+          <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-foreground pointer-events-none transition-colors group-focus-within:text-foreground" />
           <Input 
             type="date" 
             value={filterDate} 
@@ -1145,17 +786,6 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
       return statusMatch || isPast;
     });
 
-    // Debug: Log de fechas y horas para identificar el problema
-    console.log('Historial - Fechas y horas:', historyAppointments.map(a => ({
-      id: getId(a),
-      date: a.date,
-      time: a.time,
-      dateType: typeof a.date,
-      timeType: typeof a.time
-    })));
-
-    
-
     // Estadísticas del historial
     const totalAppointments = historyAppointments.length;
     const completedAppointments = historyAppointments.filter(a => a.status === 'completed').length;
@@ -1224,7 +854,7 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
         {/* Filtros */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="relative group">
-            <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none transition-colors group-focus-within:text-primary" />
+            <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-foreground pointer-events-none transition-colors group-focus-within:text-foreground" />
             <Input 
               type="date" 
               value={filterDate}
@@ -1276,13 +906,11 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
                     
                     // Verificar si la fecha es válida
                     if (isNaN(date.getTime())) {
-                      console.warn('Fecha inválida:', { dateStr, timeStr, dateTimeStr });
                       return new Date(dateStr); // Fallback a solo fecha
                     }
                     
                     return date;
                   } catch (error) {
-                    console.warn('Error creando fecha:', error, { dateStr, timeStr });
                     return new Date(dateStr); // Fallback a solo fecha
                   }
                 };
@@ -1476,7 +1104,8 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
                       </Button>
                     </div>
                     <Button size="sm" onClick={() => {
-                      setSelectedShop(shopId);
+                      setBookingPrefill({ barbershopId: shopId });
+                      setShowBookingForm(true);
                       setActiveModule('appointments');
                     }}>
                       Elegir barbería
@@ -1515,8 +1144,11 @@ console.log('RESPUESTA BACKEND:', error?.response?.data);
                     </div>
                     <Button size="sm" variant="outline" onClick={() => {
                       const shopId = barber.barbershop ? getId(barber.barbershop) : '';
-                      if (shopId) setSelectedShop(shopId);
-                      setSelectedBarber(barberId);
+                      setBookingPrefill({
+                        barbershopId: shopId || undefined,
+                        barberId,
+                      });
+                      setShowBookingForm(true);
                       setActiveModule('appointments');
                     }}>
                       Elegir barbero

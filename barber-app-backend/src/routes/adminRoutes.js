@@ -7,8 +7,6 @@ const { createUser, updateUser, deleteUser } = require("../controllers/adminCont
 
 router.get("/dashboard", protect, authorizeRoles("admin", "owner"), getDashboardStats);
 
-// Nota: Las funciones createUser y updateBarberSchedule se implementarán en el futuro
-
 // Obtener top barberos del mes
 router.get("/top-barbers", protect, authorizeRoles("admin", "owner"), getTopBarbers);
 

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middlewares/authMiddleware');
 const { authorizeRoles } = require("../middlewares/roleMiddleware");
-const { updateUserSchedule, updateBarberProfile, getUserProfile, addBlockedTime, listUsers, getMyFavorites, updateMyFavorites } = require('../controllers/userController');
+const { updateUserSchedule, updateBarberProfile, getUserProfile, listUsers, getMyFavorites, updateMyFavorites } = require('../controllers/userController');
 
 // Actualizar horario del barbero
 router.put('/me/schedule', protect, authorizeRoles("barber"), updateUserSchedule);

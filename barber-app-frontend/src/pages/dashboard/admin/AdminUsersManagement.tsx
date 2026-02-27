@@ -258,7 +258,7 @@ export default function AdminUsersManagement() {
               <SelectItem value="client">Clientes</SelectItem>
               <SelectItem value="barber">Barberos</SelectItem>
               <SelectItem value="admin">Administradores</SelectItem>
-              <SelectItem value="owner">Owners</SelectItem>
+              <SelectItem value="owner">Propietarios</SelectItem>
             </SelectContent>
           </Select>
 
@@ -424,7 +424,7 @@ export default function AdminUsersManagement() {
                   <SelectItem value="client">Cliente</SelectItem>
                   <SelectItem value="barber">Barbero</SelectItem>
                   <SelectItem value="admin">Administrador</SelectItem>
-                  <SelectItem value="owner">Owner</SelectItem>
+                  <SelectItem value="owner">Propietario</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -1,6 +1,5 @@
 const User = require("../models/User");
 const Barbershop = require("../models/Barbershop");
-const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { handleError } = require("../utils/errorHandler");
 const crypto = require('crypto');

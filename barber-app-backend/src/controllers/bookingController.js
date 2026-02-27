@@ -47,20 +47,6 @@ const getServiceAndPrice = async (serviceId, barberId, barbershopId) => {
     };
 };
 
-
-
-
-//Verficar disponibilidad de agenda
-
-const isAvailable = async (barbershop, date, time) => {
-    const booking = await Booking.findOne({ 
-        where: { barbershopId: barbershop, date, time } 
-    });
-    return !booking;
-};
-
-
-
 //Crear una reserva
 const createBooking = async (req, res) => {
     try {
@@ -438,7 +424,6 @@ const getBarberAgenda = async (req, res) => {
         } else {
             where.date = parseDate.toISODate();
         }
-        console.log("Buscando con where:", where);
         const bookings = await Booking.findAll({
             where,
             include: [
@@ -783,65 +768,83 @@ const deleteBooking = async (req, res) => {
 const getAvailableSlots = async (req, res) => {
     try {
         const { barbershopId, barberId, serviceId, date } = req.query;
+        if (!barbershopId || !barberId || !serviceId || !date) {
+            return res.status(400).json({ message: "barbershopId, barberId, serviceId y date son obligatorios" });
+        }
 
-        console.log("📅 Fecha solicitada:", date);
-        console.log("🏪 Barbería:", barbershopId);
-        console.log("💈 Barbero:", barberId);
-        console.log("🔧 Servicio:", serviceId);
+        const requestedDate = DateTime.fromISO(date, { zone: "America/Bogota" });
+        if (!requestedDate.isValid) {
+            return res.status(400).json({ message: "Fecha inválida. Usa formato YYYY-MM-DD" });
+        }
 
-        const dayOfWeek = DateTime.fromISO(date).weekday % 7;
+        const dayOfWeek = requestedDate.weekday % 7;
 
-        // 1. Validar barbería y servicio
         const barbershop = await Barbershop.findByPk(barbershopId);
         if (!barbershop) return res.status(404).json({ message: "Barbería no encontrada" });
 
-        const services = barbershop.services || [];
-        const service = services.find(s => {
+        const barber = await User.findByPk(barberId);
+        if (!barber || barber.role !== 'barber') {
+            return res.status(404).json({ message: "Barbero no encontrado" });
+        }
+        if (barber.barbershopId !== barbershopId) {
+            return res.status(400).json({ message: "El barbero no pertenece a la barbería seleccionada" });
+        }
+
+        const barbershopServices = barbershop.services || [];
+        const serviceFromBarbershop = barbershopServices.find((s) => {
             const id = s.id || s._id;
             return id && id.toString() === serviceId;
         });
-        if (!service) return res.status(404).json({ message: "Servicio no encontrado" });
 
-        if (barberId) {
-            const barber = await User.findByPk(barberId);
-            if (!barber || barber.role !== 'barber') {
-                return res.status(404).json({ message: "Barbero no encontrado" });
-            }
+        let serviceDuration = null;
+
+        if (serviceFromBarbershop) {
             const customPrice = barber.customPrices?.[serviceId];
             if (!customPrice || !customPrice.isActive) {
                 return res.json({ availableSlots: [] });
             }
+            serviceDuration = Number(serviceFromBarbershop.duration);
+        } else {
+            const customServices = barber.customServices || [];
+            const customService = customServices.find((s) => {
+                const id = s.id || s._id;
+                return id && id.toString() === serviceId;
+            });
+            if (!customService || !customService.isActive) {
+                return res.json({ availableSlots: [] });
+            }
+            serviceDuration = Number(customService.duration);
         }
 
-        const serviceDuration = service.duration;
+        if (!serviceDuration || serviceDuration <= 0) {
+            return res.status(400).json({ message: "La duración del servicio no es válida" });
+        }
 
-        // 2. Obtener horario del barbero
-        const barber = await User.findByPk(barberId);
-        const schedule = barber?.schedule || {};
-        const workingHours = schedule?.[dayOfWeek.toString()];
-
+        const schedule = barber.schedule || {};
+        const workingHours = schedule[dayOfWeek.toString()];
         if (!workingHours || !workingHours.start || !workingHours.end) {
             return res.json({ availableSlots: [] });
         }
 
-        // 3. Construir slots posibles (granularidad 15 min)
-        const startTime = DateTime.fromISO(`${date}T${workingHours.start}`);
-        const endTime = DateTime.fromISO(`${date}T${workingHours.end}`);
-        const allSlots = [];
+        const dayStart = requestedDate.startOf("day");
+        const dayEnd = requestedDate.endOf("day");
+        const workingStart = DateTime.fromISO(`${date}T${workingHours.start}`, { zone: "America/Bogota" });
+        const workingEnd = DateTime.fromISO(`${date}T${workingHours.end}`, { zone: "America/Bogota" });
 
+        if (!workingStart.isValid || !workingEnd.isValid || workingEnd <= workingStart) {
+            return res.json({ availableSlots: [] });
+        }
+
+        const allSlots = [];
         const slotStepMinutes = 15;
-        let current = startTime;
-        while (current.plus({ minutes: serviceDuration }) <= endTime) {
+        let current = workingStart;
+        while (current.plus({ minutes: serviceDuration }) <= workingEnd) {
             allSlots.push({
                 start: current.toISO(),
                 end: current.plus({ minutes: serviceDuration }).toISO(),
             });
             current = current.plus({ minutes: slotStepMinutes });
         }
-
-        // 4. Obtener reservas existentes en ese día
-        const dayStart = startTime.startOf("day");
-        const dayEnd = startTime.endOf("day");
 
         const bookings = await Booking.findAll({
             where: {
@@ -852,11 +855,13 @@ const getAvailableSlots = async (req, res) => {
             }
         });
 
-        const reservedIntervals = bookings.map(b =>
-            Interval.fromDateTimes(DateTime.fromJSDate(b.startTime), DateTime.fromJSDate(b.endTime))
+        const reservedIntervals = bookings.map((b) =>
+            Interval.fromDateTimes(
+                DateTime.fromJSDate(b.startTime, { zone: "America/Bogota" }),
+                DateTime.fromJSDate(b.endTime, { zone: "America/Bogota" })
+            )
         );
 
-        // 5. Obtener bloqueos del barbero en ese día
         const blocks = await AvailabilityBlock.findAll({
             where: {
                 [Op.or]: [
@@ -868,16 +873,24 @@ const getAvailableSlots = async (req, res) => {
             }
         });
 
-        const blockedIntervals = blocks.map(b =>
-            Interval.fromDateTimes(DateTime.fromJSDate(b.start), DateTime.fromJSDate(b.end))
+        const blockedIntervals = blocks.map((b) =>
+            Interval.fromDateTimes(
+                DateTime.fromJSDate(b.start, { zone: "America/Bogota" }),
+                DateTime.fromJSDate(b.end, { zone: "America/Bogota" })
+            )
         );
 
-        // 6. Filtrar slots disponibles
-        const availableSlots = allSlots.filter(slot => {
-            const slotInterval = Interval.fromDateTimes(DateTime.fromISO(slot.start), DateTime.fromISO(slot.end));
-            const overlapsReservation = reservedIntervals.some(r => r.overlaps(slotInterval));
-            const overlapsBlock = blockedIntervals.some(b => b.overlaps(slotInterval));
-            return !overlapsReservation && !overlapsBlock;
+        const now = DateTime.now().setZone("America/Bogota");
+        const availableSlots = allSlots.filter((slot) => {
+            const slotStart = DateTime.fromISO(slot.start, { zone: "America/Bogota" });
+            const slotEnd = DateTime.fromISO(slot.end, { zone: "America/Bogota" });
+            const slotInterval = Interval.fromDateTimes(slotStart, slotEnd);
+
+            const overlapsReservation = reservedIntervals.some((r) => r.overlaps(slotInterval));
+            const overlapsBlock = blockedIntervals.some((b) => b.overlaps(slotInterval));
+            const isPastSlot = slotStart <= now;
+
+            return !overlapsReservation && !overlapsBlock && !isPastSlot;
         });
 
         return res.json({ availableSlots });

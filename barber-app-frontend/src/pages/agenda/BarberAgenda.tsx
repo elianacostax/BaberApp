@@ -1,8 +1,6 @@
 import { Calendar, Clock, Users, Star, Search, Filter, Eye, CheckCircle, XCircle, AlertCircle, DollarSign, TrendingUp, Phone, MapPin, Scissors } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -15,7 +13,6 @@ import { SkeletonGrid } from "@/components/ui/skeleton-card";
 import { EnhancedDialog } from "@/components/ui/enhanced-dialog";
 import { EnhancedButton } from "@/components/ui/enhanced-button";
 import { EnhancedCard } from "@/components/ui/enhanced-card";
-import { gradients, utilityClasses, hoverStates } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 
 interface AgendaItem {
@@ -307,7 +304,7 @@ const formatTime = (timeString: string) => {
         <div className="flex flex-col lg:flex-row gap-4">
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-foreground" />
               <Input
                 type="date"
                 value={selectedDate}
@@ -354,12 +351,12 @@ const formatTime = (timeString: string) => {
                 <CardContent className="p-6">
                   <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
                     <div className="flex items-start gap-4 flex-1">
-                      <div className="p-4 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 shadow-lg">
+                      <div className="p-4 rounded-xl bg-gradient-to-r from-primary to-primary-glow shadow-lg">
                         <Scissors className="h-6 w-6 text-white" />
                       </div>
                       <div className="space-y-3 flex-1">
                         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                          <h3 className="text-xl font-semibold group-hover:text-blue-600 transition-colors">
+                          <h3 className="text-xl font-semibold group-hover:text-primary transition-colors">
                             {appointment.serviceName}
                           </h3>
                           <StatusBadge 
@@ -394,7 +391,7 @@ const formatTime = (timeString: string) => {
                     
                     <div className="flex flex-col sm:flex-row items-end gap-4">
                       <div className="text-right">
-                        <div className="text-2xl font-bold text-purple-600 mb-1">
+                        <div className="text-2xl font-bold text-primary mb-1">
                           ${appointment.servicePrice.toLocaleString()}
                         </div>
                         <div className="text-sm text-muted-foreground">
@@ -412,7 +409,7 @@ const formatTime = (timeString: string) => {
                         >
                           <div className="space-y-6">
                             <div className="flex items-center gap-4">
-                              <div className="p-4 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600">
+                              <div className="p-4 rounded-xl bg-gradient-to-r from-primary to-primary-glow">
                                 <Scissors className="h-8 w-8 text-white" />
                               </div>
                               <div>
@@ -446,7 +443,7 @@ const formatTime = (timeString: string) => {
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-muted-foreground">Precio:</span>
-                                    <span className="font-bold text-lg text-purple-600">${appointment.servicePrice.toLocaleString()}</span>
+                                    <span className="font-bold text-lg text-primary">${appointment.servicePrice.toLocaleString()}</span>
                                   </div>
                                 </div>
                               </div>
@@ -550,8 +547,8 @@ const formatTime = (timeString: string) => {
           })
         ) : (
           <EnhancedCard variant="glass" className="text-center p-12">
-            <div className="mx-auto w-24 h-24 rounded-full bg-gradient-to-r from-blue-100 to-purple-100 flex items-center justify-center mb-6">
-              <Calendar className="h-12 w-12 text-blue-600" />
+            <div className="mx-auto w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center mb-6">
+              <Calendar className="h-12 w-12 text-primary" />
             </div>
             <h3 className="text-xl font-semibold mb-2">
               {searchTerm || statusFilter !== "all" ? "No se encontraron citas" : "No hay citas programadas"}

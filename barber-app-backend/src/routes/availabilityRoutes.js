@@ -14,7 +14,7 @@ router.post("/",
   createAvailabilityBlock
 );
 
-router.get("/", protect, getAvailabilityBlocks); // Consultar bloqueos (admin o barbero)
+router.get("/", protect, authorizeRoles("barber", "admin"), getAvailabilityBlocks); // Consultar bloqueos (admin o barbero)
 
 router.delete("/:id", protect, authorizeRoles("barber", "admin"), deleteAvailabilityBlock);
 

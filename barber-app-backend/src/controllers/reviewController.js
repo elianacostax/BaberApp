@@ -10,6 +10,23 @@ const createReview = async (req, res) => {
         const { barber, booking, rating, comment } = req.body;
         const userId = req.user.id;
 
+        const bookingRecord = await Booking.findByPk(booking);
+        if (!bookingRecord) {
+            return res.status(404).json({ message: "Reserva no encontrada" });
+        }
+
+        if (bookingRecord.userId !== userId) {
+            return res.status(403).json({ message: "No autorizado para calificar esta reserva" });
+        }
+
+        if (bookingRecord.barberId !== barber) {
+            return res.status(400).json({ message: "La reserva no corresponde al barbero seleccionado" });
+        }
+
+        if (bookingRecord.status !== "completed") {
+            return res.status(400).json({ message: "Solo puedes calificar reservas completadas" });
+        }
+
         const existingReview = await Review.findOne({ where: { bookingId: booking } });
         if (existingReview) {
             return res.status(400).json({ message: "Ya has calificado esta reserva" });

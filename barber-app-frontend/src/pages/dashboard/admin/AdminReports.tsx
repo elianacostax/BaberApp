@@ -218,7 +218,7 @@ export default function AdminReports() {
 
   const exportReport = () => {
     // Implementar exportación de reportes
-    console.log('Exporting report...');
+    return;
   };
 
   return (

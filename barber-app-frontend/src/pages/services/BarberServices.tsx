@@ -18,7 +18,7 @@ import { ServiceIcon } from "@/components/ui/service-icon";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { SkeletonGrid } from "@/components/ui/skeleton-card";
 import { EnhancedDialog, ConfirmDialog } from "@/components/ui/enhanced-dialog";
-import { gradients, utilityClasses, hoverStates } from "@/lib/styles";
+import { utilityClasses } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 
 interface Service {
@@ -196,7 +196,7 @@ export default function BarberServices() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className={cn("text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent")}>
+          <h1 className={cn("text-3xl font-bold bg-gradient-to-r from-primary to-primary-glow bg-clip-text text-transparent")}>
             Mis Servicios
           </h1>
           <p className="text-muted-foreground mt-1">
@@ -278,7 +278,7 @@ export default function BarberServices() {
                       size="lg"
                     />
                     <div className="space-y-1">
-                      <CardTitle className="text-lg group-hover:text-blue-600 transition-colors">
+                      <CardTitle className="text-lg group-hover:text-primary transition-colors">
                         {service.name}
                       </CardTitle>
                       <div className="flex items-center gap-2">
@@ -362,8 +362,8 @@ export default function BarberServices() {
         </div>
       ) : (
         <div className="text-center py-12">
-          <div className="mx-auto w-24 h-24 rounded-full bg-gradient-to-r from-blue-100 to-purple-100 flex items-center justify-center mb-6">
-            <Settings className="h-12 w-12 text-blue-600" />
+          <div className="mx-auto w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center mb-6">
+            <Settings className="h-12 w-12 text-primary" />
           </div>
           <h3 className="text-xl font-semibold mb-2">
             {filter === 'all' ? 'No tienes servicios creados' : 'No hay servicios que coincidan con el filtro'}

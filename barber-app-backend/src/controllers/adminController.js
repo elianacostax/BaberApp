@@ -1,7 +1,6 @@
 const Booking = require("../models/Booking");
 const Barbershop = require("../models/Barbershop");
 const User = require("../models/User");
-const jwt = require("jsonwebtoken");
 const { handleError } = require("../utils/errorHandler");
 const { DateTime } = require("luxon");
 const { Op } = require("sequelize");
@@ -232,43 +231,6 @@ const getDashboardStats = async (req, res) => {
         });
     } catch (err) {
         handleError(res, 'Error al obtener estadísticas', 500, err);
-    }
-};
-
-// Actualizar horario de cualquier barbero (admin)
-module.exports.updateBarberSchedule = async (req, res) => {
-    try {
-        const { barberId } = req.params;
-        const { schedule } = req.body;
-
-        const barber = await User.findByPk(barberId);
-        if (!barber || barber.role !== 'barber') {
-            return res.status(404).json({ message: 'Barbero no encontrado' });
-        }
-
-        // Validar contra horario de barbería si existe
-        if (barber.barbershopId) {
-            const shop = await Barbershop.findByPk(barber.barbershopId);
-            if (shop && shop.openingHours) {
-                const { openHour, closeHour } = shop.openingHours;
-                for (const [day, hours] of Object.entries(schedule)) {
-                    if (!hours || !hours.start || !hours.end) continue;
-                    const [sh, sm] = hours.start.split(':').map(Number);
-                    const [eh, em] = hours.end.split(':').map(Number);
-                    if (sh < openHour || eh > closeHour || (eh === closeHour && em > 0)) {
-                        return res.status(400).json({
-                            message: `El día ${day} debe estar entre ${String(openHour).padStart(2,'0')}:00 y ${String(closeHour).padStart(2,'0')}:00`
-                        });
-                    }
-                }
-            }
-        }
-
-        barber.schedule = schedule;
-        await barber.save();
-        return res.json({ message: 'Horario actualizado', schedule: barber.schedule });
-    } catch (err) {
-        return res.status(500).json({ message: 'Error al actualizar horario', error: err.message });
     }
 };
 
@@ -619,7 +581,7 @@ const listUsersAdmin = async (req, res) => {
 
         const users = await User.findAll({
             where,
-            attributes: { exclude: ["password"] },
+            attributes: { exclude: ["password", "resetPasswordToken", "resetPasswordExpires"] },
             include: [{ model: Barbershop, as: "barbershop", attributes: ["id", "name", "location"] }]
         });
         res.json(users);

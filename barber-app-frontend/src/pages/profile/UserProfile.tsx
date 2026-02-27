@@ -183,6 +183,8 @@ export default function UserProfile() {
         return 'Barbero';
       case 'admin':
         return 'Administrador';
+      case 'owner':
+        return 'Propietario';
       default:
         return role;
     }
@@ -191,13 +193,15 @@ export default function UserProfile() {
   const getRoleColor = (role: string) => {
     switch (role) {
       case 'client':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-primary/15 text-primary';
       case 'barber':
-        return 'bg-green-100 text-green-800';
+        return 'bg-success/15 text-success';
       case 'admin':
-        return 'bg-purple-100 text-purple-800';
+        return 'bg-warning/15 text-warning';
+      case 'owner':
+        return 'bg-primary/15 text-primary';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-muted text-muted-foreground';
     }
   };
 

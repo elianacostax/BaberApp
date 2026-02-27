@@ -38,21 +38,21 @@ const menuItems: Record<UserRole, Array<{
   description?: string;
 }>> = {
   client: [
-    { title: "Dashboard", url: "/dashboard", icon: Calendar, description: "Ver mis citas" },
+    { title: "Inicio", url: "/dashboard", icon: Calendar, description: "Ver mis citas" },
     { title: "Agendar Cita", url: "/book", icon: Clock, description: "Nueva reserva" },
     { title: "Mis Reservas", url: "/appointments", icon: Calendar, description: "Historial" },
     { title: "Barberos", url: "/barbers", icon: Scissors, description: "Ver barberos" },
     { title: "Mi Perfil", url: "/profile", icon: User, description: "Datos personales" },
   ],
   barber: [
-    { title: "Dashboard", url: "/dashboard", icon: Calendar, description: "Mi agenda" },
+    { title: "Inicio", url: "/dashboard", icon: Calendar, description: "Mi agenda" },
     { title: "Servicios", url: "/services", icon: Scissors, description: "Mis servicios" },
     { title: "Clientes", url: "/clients", icon: Users, description: "Mis clientes" },
     { title: "Calificaciones", url: "/reviews", icon: Star, description: "Reseñas" },
     { title: "Mi Perfil", url: "/profile", icon: User, description: "Perfil profesional" },
   ],
   admin: [
-    { title: "Dashboard", url: "/dashboard", icon: BarChart3, description: "Panel general" },
+    { title: "Inicio", url: "/dashboard", icon: BarChart3, description: "Panel general" },
     { title: "Citas", url: "/all-appointments", icon: Calendar, description: "Todas las citas" },
     { title: "Usuarios", url: "/users", icon: Users, description: "Gestión de usuarios" },
     { title: "Barberos", url: "/manage-barbers", icon: Scissors, description: "Gestión barberos" },
@@ -61,7 +61,7 @@ const menuItems: Record<UserRole, Array<{
     { title: "Configuración", url: "/settings", icon: Settings, description: "Sistema" },
   ],
   owner: [
-    { title: "Dashboard", url: "/dashboard", icon: BarChart3, description: "Panel general" },
+    { title: "Inicio", url: "/dashboard", icon: BarChart3, description: "Panel general" },
     { title: "Citas", url: "/all-appointments", icon: Calendar, description: "Reservas" },
     { title: "Usuarios", url: "/users", icon: Users, description: "Equipo" },
     { title: "Estadísticas", url: "/analytics", icon: BarChart3, description: "Reportes" },
@@ -77,8 +77,14 @@ export function AppSidebar() {
   if (!user) return null;
 
   const items = menuItems[user.role] || [];
-  const isActive = (path: string) => currentPath === path;
   const collapsed = state === "collapsed";
+  const roleLabel = user.role === "client"
+    ? "Cliente"
+    : user.role === "barber"
+      ? "Barbero"
+      : user.role === "owner"
+        ? "Propietario"
+        : "Administrador";
 
   return (
     <Sidebar className={`${collapsed ? "w-16" : "w-72"} transition-all duration-300`}>
@@ -93,7 +99,7 @@ export function AppSidebar() {
                 BarberApp
               </h2>
               <p className="text-sm text-muted-foreground capitalize">
-                Panel {user.role as UserRole === "client" ? "Cliente" : user.role === "barber" ? "Barbero" : user.role === "owner" ? "Propietario" : "Administrador"}
+                Panel {roleLabel}
               </p>
             </div>
           )}
@@ -152,7 +158,7 @@ export function AppSidebar() {
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-sm truncate">{user.name}</div>
                   <div className="text-xs text-muted-foreground truncate">
-                    {user.role as UserRole === "client" ? "Cliente" : user.role === "barber" ? "Barbero" : user.role === "owner" ? "Propietario" : "Administrador"}
+                    {roleLabel}
                   </div>
                 </div>
               </div>

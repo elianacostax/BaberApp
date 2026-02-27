@@ -3,7 +3,7 @@ const router = express.Router();
 const { createBooking, repeatBooking, getAvailableSlots, getBarberAgenda, getUserBookings, updateBookingStatus, getAllBookings, deleteBooking, cancelBooking, getMyReservations, createBookingForClient, changeBookingBarber, getBookingsWithAutoUpdate, getBookingStats, createWalkInBooking } = require("../controllers/bookingController");
 const { protect } = require("../middlewares/authMiddleware");
 const { authorizeRoles } = require("../middlewares/roleMiddleware");
-const { validateBody, validateSchema, schemas } = require("../middlewares/validateBody");
+const { validateSchema, schemas } = require("../middlewares/validateBody");
 const { bookingLimiter, staffBookingLimiter } = require("../middlewares/rateLimiter");
 
 
