@@ -6,21 +6,21 @@ const { authorizeRoles } = require("../middlewares/roleMiddleware");
 const { validateSchema, schemas } = require("../middlewares/validateBody");
 const {createAvailabilityBlock, getAvailabilityBlocks, deleteAvailabilityBlock, updateAvailabilityBlock} = require("../controllers/availabilityController");
 
-// Solo barberos o admins pueden crear bloqueos
+// Staff de barbería: barbero, owner o admin global
 router.post("/", 
   protect, 
-  authorizeRoles("barber", "admin"), 
+  authorizeRoles("barber", "owner", "admin"), 
   validateSchema(schemas.availabilityBlockCreate), 
   createAvailabilityBlock
 );
 
-router.get("/", protect, authorizeRoles("barber", "admin"), getAvailabilityBlocks); // Consultar bloqueos (admin o barbero)
+router.get("/", protect, authorizeRoles("barber", "owner", "admin"), getAvailabilityBlocks);
 
-router.delete("/:id", protect, authorizeRoles("barber", "admin"), deleteAvailabilityBlock);
+router.delete("/:id", protect, authorizeRoles("barber", "owner", "admin"), deleteAvailabilityBlock);
 
 router.put("/:id", 
   protect, 
-  authorizeRoles("barber", "admin"),
+  authorizeRoles("barber", "owner", "admin"),
   validateSchema(schemas.availabilityBlockUpdate), 
   updateAvailabilityBlock
 );

@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getId } from "@/lib/id";
+import { formatReminderWindow, getSentReminderWindows, isAutoAssignedBooking } from "@/lib/booking-insights";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,6 +14,7 @@ import { SkeletonGrid } from "@/components/ui/skeleton-card";
 import { EnhancedDialog } from "@/components/ui/enhanced-dialog";
 import { EnhancedButton } from "@/components/ui/enhanced-button";
 import { EnhancedCard } from "@/components/ui/enhanced-card";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 interface AgendaItem {
@@ -42,6 +44,12 @@ interface AgendaItem {
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  history?: Array<{
+    type?: string;
+    eventType?: string;
+    assignmentMode?: string;
+    reminderWindowMinutes?: number;
+  }>;
 }
 
 export default function BarberAgenda() {
@@ -365,6 +373,16 @@ const formatTime = (timeString: string) => {
                             showIcon={true}
                           />
                         </div>
+                        <div className="flex flex-wrap gap-2">
+                          {isAutoAssignedBooking(appointment) && (
+                            <Badge variant="secondary">Autoasignada</Badge>
+                          )}
+                          {getSentReminderWindows(appointment).map((windowMinutes) => (
+                            <Badge key={`${getId(appointment)}-${windowMinutes}`} variant="outline">
+                              Recordatorio {formatReminderWindow(windowMinutes)}
+                            </Badge>
+                          ))}
+                        </div>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                           <div className="flex items-center gap-2 text-muted-foreground">
@@ -419,6 +437,16 @@ const formatTime = (timeString: string) => {
                                   size="lg"
                                   showIcon={true}
                                 />
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {isAutoAssignedBooking(appointment) && (
+                                    <Badge variant="secondary">Asignación automática</Badge>
+                                  )}
+                                  {getSentReminderWindows(appointment).map((windowMinutes) => (
+                                    <Badge key={`detail-${getId(appointment)}-${windowMinutes}`} variant="outline">
+                                      Recordatorio enviado {formatReminderWindow(windowMinutes)}
+                                    </Badge>
+                                  ))}
+                                </div>
                               </div>
                             </div>
 

@@ -3,6 +3,7 @@ const Barbershop = require("./Barbershop");
 const Booking = require("./Booking");
 const Review = require("./Review");
 const AvailabilityBlock = require("./AvailabilityBlock");
+const NotificationJob = require("./NotificationJob");
 
 // Relaciones User - Barbershop
 User.belongsTo(Barbershop, {
@@ -98,7 +99,35 @@ Booking.hasOne(Review, {
   as: "review",
 });
 
+// Relaciones NotificationJob
+NotificationJob.belongsTo(Booking, {
+  foreignKey: "bookingId",
+  as: "booking",
+});
+Booking.hasMany(NotificationJob, {
+  foreignKey: "bookingId",
+  as: "notificationJobs",
+});
+
+NotificationJob.belongsTo(Barbershop, {
+  foreignKey: "barbershopId",
+  as: "barbershop",
+});
+Barbershop.hasMany(NotificationJob, {
+  foreignKey: "barbershopId",
+  as: "notificationJobs",
+});
+
 // Relaciones AvailabilityBlock
+AvailabilityBlock.belongsTo(Barbershop, {
+  foreignKey: "barbershopId",
+  as: "barbershop",
+});
+Barbershop.hasMany(AvailabilityBlock, {
+  foreignKey: "barbershopId",
+  as: "availabilityBlocks",
+});
+
 AvailabilityBlock.belongsTo(User, {
   foreignKey: "barberId",
   as: "barber",
@@ -123,4 +152,5 @@ module.exports = {
   Booking,
   Review,
   AvailabilityBlock,
+  NotificationJob,
 };

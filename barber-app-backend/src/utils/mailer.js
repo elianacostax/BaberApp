@@ -24,6 +24,10 @@ function getTransporter() {
   return transporter;
 }
 
+function isMailConfigured() {
+  return Boolean(SMTP_HOST);
+}
+
 async function sendResetPasswordEmail(to, token) {
   const url = `${FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${encodeURIComponent(token)}`;
   const mailOptions = {
@@ -41,6 +45,25 @@ async function sendResetPasswordEmail(to, token) {
   return tx.messageId;
 }
 
-module.exports = { sendResetPasswordEmail };
+async function sendBookingNotificationEmail({ to, subject, html, text }) {
+  if (!isMailConfigured() || !to) {
+    return null;
+  }
 
+  const tx = await getTransporter().sendMail({
+    from: SMTP_FROM || 'no-reply@barberapp.local',
+    to,
+    subject,
+    html,
+    text,
+  });
+
+  return tx.messageId;
+}
+
+module.exports = {
+  isMailConfigured,
+  sendResetPasswordEmail,
+  sendBookingNotificationEmail,
+};
 

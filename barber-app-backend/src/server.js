@@ -12,6 +12,7 @@ const serviceRoutes = require('./routes/serviceRoutes');
 const barberRoutes = require('./routes/barberRoutes');
 const { generalLimiter, authLimiter, adminLimiter } = require("./middlewares/rateLimiter");
 const { logRequest, logger } = require("./utils/logger");
+const { startNotificationQueueWorker } = require("./utils/notificationQueueWorker");
 require("dotenv").config();
 const app = express();
 
@@ -50,6 +51,7 @@ app.use("/api/barbers", barberRoutes);
 
 //Conectar la base de datos
 connectDB();
+startNotificationQueueWorker();
 
 //Prueba de API 
 app.get("/", (req, res)=>{

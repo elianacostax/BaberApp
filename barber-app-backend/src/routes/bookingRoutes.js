@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { createBooking, repeatBooking, getAvailableSlots, getBarberAgenda, getUserBookings, updateBookingStatus, getAllBookings, deleteBooking, cancelBooking, getMyReservations, createBookingForClient, changeBookingBarber, getBookingsWithAutoUpdate, getBookingStats, createWalkInBooking } = require("../controllers/bookingController");
+const { createBooking, repeatBooking, getAvailableSlots, getRecommendedBarber, getBarberAgenda, getUserBookings, updateBookingStatus, getAllBookings, deleteBooking, cancelBooking, getMyReservations, createBookingForClient, changeBookingBarber, getBookingsWithAutoUpdate, getBookingStats, createWalkInBooking } = require("../controllers/bookingController");
 const { protect } = require("../middlewares/authMiddleware");
 const { authorizeRoles } = require("../middlewares/roleMiddleware");
 const { validateSchema, schemas } = require("../middlewares/validateBody");
@@ -48,6 +48,7 @@ router.delete('/:id', protect, authorizeRoles("admin", "owner"), deleteBooking);
 
 //Consultar disponibildad
 router.get('/availability', getAvailableSlots);
+router.get('/recommendation', getRecommendedBarber);
 
 //Consulta histporico de reservas
 router.get('/my-reservations', protect, getMyReservations);

@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const { Sequelize } = require("sequelize");
 require("dotenv").config();
 
@@ -20,18 +22,35 @@ const sequelize = new Sequelize(
   }
 ); 
 
+const runBootstrapSqlScripts = async () => {
+  const scriptPaths = [
+    path.join(__dirname, "../scripts/addAvailabilityBlockBarbershopScope.sql"),
+    path.join(__dirname, "../scripts/createNotificationJobsTable.sql"),
+  ];
+
+  for (const scriptPath of scriptPaths) {
+    if (!fs.existsSync(scriptPath)) continue;
+    const sql = fs.readFileSync(scriptPath, "utf8").trim();
+    if (!sql) continue;
+    await sequelize.query(sql);
+  }
+};
+
 const connectDB = async () => {
   try {
     await sequelize.authenticate();
     console.log("✅ PostgreSQL conectado exitosamente");
     console.log(`📊 Base de datos: ${sequelize.config.database}`);
+
+    await runBootstrapSqlScripts();
     
     // Cargar modelos y relaciones
     require("../models/index");
     
-    // Sincronizar modelos (en desarrollo, en producción usar migraciones)
-    if (process.env.NODE_ENV === "development") {
-      await sequelize.sync({ alter: false }); // alter: false para no modificar estructura existente
+    // En una base existente, sync puede romper enums/constraints legacy.
+    // Solo se habilita si se solicita explícitamente.
+    if (process.env.DB_SYNC === "true") {
+      await sequelize.sync({ alter: false });
       console.log("✅ Modelos sincronizados");
     }
   } catch (error) {

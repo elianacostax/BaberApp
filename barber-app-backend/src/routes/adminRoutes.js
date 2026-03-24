@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { protect } = require("../middlewares/authMiddleware");
 const { authorizeRoles } = require("../middlewares/roleMiddleware");
-const { getDashboardStats, getTopBarbers, getMonthlyData, changeUserRole, createBarbershop, listUsersAdmin, listBarbershopsAdmin } = require("../controllers/adminController");
+const { getDashboardStats, getTopBarbers, getMonthlyData, changeUserRole, createBarbershop, listUsersAdmin, listBarbershopsAdmin, getBarberOperationalDiagnostics } = require("../controllers/adminController");
 const { createUser, updateUser, deleteUser } = require("../controllers/adminController");
 
 router.get("/dashboard", protect, authorizeRoles("admin", "owner"), getDashboardStats);
@@ -16,6 +16,7 @@ router.get("/monthly-data", protect, authorizeRoles("admin", "owner"), getMonthl
 // Listados admin
 router.get("/users", protect, authorizeRoles("admin", "owner"), listUsersAdmin);
 router.get("/barbershops", protect, authorizeRoles("admin", "owner"), listBarbershopsAdmin);
+router.get("/barbers/diagnostics", protect, authorizeRoles("admin", "owner"), getBarberOperationalDiagnostics);
 
 // Gestión de usuarios
 router.post("/users", protect, authorizeRoles("admin", "owner"), createUser);

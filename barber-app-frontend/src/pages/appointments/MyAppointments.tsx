@@ -24,7 +24,7 @@ interface Appointment {
   date: string;
   startTime: string;
   endTime: string;
-  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  status: 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'expired';
   serviceName: string;
   servicePrice: number;
   serviceDuration: number;
@@ -100,35 +100,12 @@ export default function MyAppointments() {
     })
   });
 
-  const rescheduleAppointment = useMutation({
-    mutationFn: async ({ id, newDate, newTime }: { id: string; newDate: string; newTime: string }) => {
-      await api.put(`/api/bookings/${id}/reschedule`, { 
-        date: newDate, 
-        startTime: newTime 
-      });
-    },
-    onSuccess: () => {
-      toast({ title: 'Cita reagendada exitosamente' });
-      queryClient.invalidateQueries({ queryKey: ['clientAppointments'] });
-    },
-    onError: (e: any) => toast({ 
-      title: 'Error al reagendar cita', 
-      description: e?.response?.data?.message || 'Intenta nuevamente', 
-      variant: 'destructive' 
-    })
-  });
-
   const replicateAppointment = useMutation({
     mutationFn: async ({ appointment, newDate, newTime }: { appointment: Appointment; newDate: string; newTime: string }) => {
-      await api.post('/api/bookings', {
-        barberId: getId(appointment.barber),
-        barbershopId: getId(appointment.barbershop),
-        serviceName: appointment.serviceName,
-        servicePrice: appointment.servicePrice,
-        serviceDuration: appointment.serviceDuration,
-        date: newDate,
-        startTime: newTime,
-        endTime: newTime // Se calculará en el backend
+      await api.post('/api/bookings/repeat', {
+        originalBookingId: getId(appointment),
+        newDate,
+        newTime
       });
     },
     onSuccess: () => {
@@ -146,9 +123,10 @@ export default function MyAppointments() {
   const rateAppointment = useMutation({
     mutationFn: async ({ id, rating, review }: { id: string; rating: number; review: string }) => {
       await api.post(`/api/reviews`, {
-        appointmentId: id,
+        booking: id,
+        barber: getId(selectedAppointment?.barber || {}),
         rating,
-        review
+        comment: review
       });
     },
     onSuccess: () => {
@@ -185,6 +163,8 @@ export default function MyAppointments() {
         return "bg-blue-100 text-blue-800";
       case "cancelled":
         return "bg-red-100 text-red-800";
+      case "expired":
+        return "bg-orange-100 text-orange-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -200,6 +180,8 @@ export default function MyAppointments() {
         return "Completada";
       case "cancelled":
         return "Cancelada";
+      case "expired":
+        return "Vencida";
       default:
         return status;
     }
@@ -220,17 +202,24 @@ const formatTime = (timeString: string) => {
   });
 };
 
+const getAppointmentStart = (appointment: Appointment) => {
+  if (appointment.startTime?.includes('T')) {
+    return new Date(appointment.startTime);
+  }
+  return new Date(`${appointment.date}T${appointment.startTime}`);
+};
+
   const isUpcoming = (appointment: Appointment) => {
-    const appointmentDate = new Date(appointment.date + 'T' + appointment.startTime);
+    const appointmentDate = getAppointmentStart(appointment);
     const now = new Date();
-    return appointmentDate > now && appointment.status !== 'cancelled' && appointment.status !== 'completed';
+    return appointmentDate > now && appointment.status !== 'cancelled' && appointment.status !== 'completed' && appointment.status !== 'expired';
   };
 
   const canCancel = (appointment: Appointment) => {
-    const appointmentDate = new Date(appointment.date + 'T' + appointment.startTime);
+    const appointmentDate = getAppointmentStart(appointment);
     const now = new Date();
-    const hoursUntilAppointment = (appointmentDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-    return hoursUntilAppointment > 24 && appointment.status === 'confirmed';
+    const minutesUntilAppointment = (appointmentDate.getTime() - now.getTime()) / (1000 * 60);
+    return minutesUntilAppointment > 30 && (appointment.status === 'confirmed' || appointment.status === 'pending');
   };
 
   const canRate = (appointment: Appointment) => {
@@ -238,7 +227,7 @@ const formatTime = (timeString: string) => {
   };
 
   const canReplicate = (appointment: Appointment) => {
-    return appointment.status === 'completed' || appointment.status === 'cancelled';
+    return appointment.status === 'completed' || appointment.status === 'cancelled' || appointment.status === 'expired';
   };
 
   const handleReplicate = (appointment: Appointment) => {
@@ -416,13 +405,14 @@ const formatTime = (timeString: string) => {
           </div>
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[150px]">
+          <SelectTrigger className="w-full sm:w-[150px]">
             <SelectValue placeholder="Estado" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="pending">Pendiente</SelectItem>
             <SelectItem value="confirmed">Confirmada</SelectItem>
+            <SelectItem value="expired">Vencida</SelectItem>
             <SelectItem value="completed">Completada</SelectItem>
             <SelectItem value="cancelled">Cancelada</SelectItem>
           </SelectContent>
@@ -431,7 +421,7 @@ const formatTime = (timeString: string) => {
           type="date"
           value={dateFilter}
           onChange={(e) => setDateFilter(e.target.value)}
-          className="w-[150px]"
+          className="w-full sm:w-[150px]"
         />
       </div>
 
@@ -441,13 +431,13 @@ const formatTime = (timeString: string) => {
           filteredAppointments.map((appointment) => (
             <Card key={getId(appointment)} className="card-premium hover:shadow-lg transition-shadow">
               <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex items-start gap-3 sm:gap-4">
                     <div className="p-3 rounded-lg bg-gradient-premium">
                       <Scissors className="h-6 w-6 text-primary-foreground" />
                     </div>
                     <div className="space-y-2">
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
                         <h3 className="text-lg font-semibold">{appointment.serviceName}</h3>
                         <Badge className={getStatusColor(appointment.status)}>
                           {getStatusLabel(appointment.status)}
@@ -473,7 +463,7 @@ const formatTime = (timeString: string) => {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                     <div className="text-right">
                       <div className="text-lg font-bold text-primary">
                         ${appointment.servicePrice.toLocaleString()}
@@ -494,7 +484,7 @@ const formatTime = (timeString: string) => {
                             Ver
                           </Button>
                         </DialogTrigger>
-                        <DialogContent className="max-w-2xl">
+                        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
                           <DialogHeader>
                             <DialogTitle>Detalle de la Cita</DialogTitle>
                           </DialogHeader>
@@ -511,7 +501,7 @@ const formatTime = (timeString: string) => {
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                               <div>
                                 <h4 className="font-semibold mb-3">Información de la Cita</h4>
                                 <div className="space-y-2 text-sm">

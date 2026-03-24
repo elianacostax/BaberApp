@@ -8,7 +8,10 @@
     "dev": "nodemon src/server.js",
     "setup-db": "bash src/scripts/setupDatabase.sh",
     "init-db": "node src/scripts/initDatabase.js",
-    "install-extensions": "node src/scripts/installExtensions.js"
+    "install-extensions": "node src/scripts/installExtensions.js",
+    "backfill-client-shops": "node src/scripts/backfillClientBarbershopAssignments.js",
+    "send-booking-reminders": "node src/scripts/sendBookingReminders.js",
+    "process-notification-queue": "node src/scripts/processNotificationQueue.js"
   },
   "author": "sergio acosta",
   "license": "ISC",

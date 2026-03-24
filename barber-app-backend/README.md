@@ -66,6 +66,44 @@ NODE_ENV=development
 # Frontend
 FRONTEND_URL=http://localhost:5173
 
+# Notificaciones de reservas
+BOOKING_NOTIFICATIONS_ENABLED=true
+BOOKING_EMAIL_NOTIFICATIONS_ENABLED=true
+BOOKING_WHATSAPP_NOTIFICATIONS_ENABLED=true
+BOOKING_BUFFER_MINUTES=10
+BOOKING_SLOT_STEP_MINUTES=15
+BOOKING_REMINDERS_ENABLED=true
+BOOKING_REMINDER_WINDOWS_MINUTES=1440,120
+BOOKING_REMINDER_TOLERANCE_MINUTES=15
+BOOKING_REMINDERS_DRY_RUN=false
+NOTIFICATION_QUEUE_MAX_ATTEMPTS=3
+NOTIFICATION_QUEUE_RETRY_DELAY_SECONDS=60
+NOTIFICATION_QUEUE_BATCH_SIZE=25
+NOTIFICATION_QUEUE_LOCK_MINUTES=5
+NOTIFICATION_QUEUE_AUTO_PROCESS=false
+NOTIFICATION_QUEUE_POLL_INTERVAL_MS=30000
+NOTIFICATION_QUEUE_WORKER_ID=
+
+# SMTP
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=no-reply@barberapp.local
+
+# WhatsApp provider: twilio o webhook
+WHATSAPP_PROVIDER=twilio
+
+# Twilio WhatsApp
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+
+# Webhook WhatsApp alternativo
+WHATSAPP_WEBHOOK_URL=
+WHATSAPP_WEBHOOK_TOKEN=
+
 # Logging
 LOG_LEVEL=info
 
@@ -93,6 +131,12 @@ npm run create-indexes
 
 # Limpiar reservas corruptas
 npm run cleanup-bookings
+
+# Enviar recordatorios de citas próximas
+npm run send-booking-reminders
+
+# Procesar jobs pendientes de notificaciones
+npm run process-notification-queue
 ```
 
 ## 📁 Estructura del Proyecto
@@ -147,9 +191,29 @@ src/
 - `POST /api/bookings` - Crear reserva
 - `GET /api/bookings` - Obtener reservas
 - `GET /api/bookings/availability` - Consultar disponibilidad
+- `GET /api/bookings/recommendation` - Recomendar mejor barbero disponible
 - `PATCH /api/bookings/:id` - Actualizar estado
 - `POST /api/bookings/repeat` - Repetir reserva
 - `PUT /api/bookings/:id/cancel` - Cancelar reserva
+
+### Notificaciones de reservas
+- Se disparan al crear, repetir, cancelar, cambiar estado, reasignar barbero y crear walk-in
+- Destinatarios: cliente, barbero y barbería
+- Canales soportados actualmente: email y WhatsApp
+- La barbería se notifica al teléfono del negocio y al email/teléfono del owner cuando existe
+- Ahora se encolan de forma persistente en `NotificationJobs`
+- Estados disponibles: `pending`, `sent`, `failed`
+- Los reintentos usan backoff exponencial hasta `NOTIFICATION_QUEUE_MAX_ATTEMPTS`
+- Para procesarlas puedes:
+  - correr `npm run process-notification-queue` desde cron o scheduler
+  - o activar `NOTIFICATION_QUEUE_AUTO_PROCESS=true` para que el backend procese la cola en segundo plano
+
+### Recordatorios automáticos
+- Ejecuta `npm run send-booking-reminders` cada 5 o 10 minutos desde cron, PM2 o el scheduler de tu hosting
+- Ventanas configurables con `BOOKING_REMINDER_WINDOWS_MINUTES`, por defecto `1440,120` minutos
+- Tolerancia configurable con `BOOKING_REMINDER_TOLERANCE_MINUTES`
+- Usa `dispatchKey` y la cola persistente para no reenviar el mismo recordatorio dos veces
+- Puedes probar sin enviar mensajes reales con `BOOKING_REMINDERS_DRY_RUN=true`
 
 ### Disponibilidad
 - `POST /api/availability` - Crear bloqueo

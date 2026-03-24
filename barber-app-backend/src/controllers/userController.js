@@ -60,7 +60,9 @@ const updateBarberProfile = async (req, res) => {
     //Validaciones
     if (photo !== undefined) user.photo = photo;
     if (bio !== undefined) user.bio = bio;
-    if (barbershop !== undefined) user.barbershopId = barbershop;
+    if (barbershop !== undefined && barbershop !== user.barbershopId) {
+      return res.status(403).json({ message: 'La barbería del barbero solo puede cambiarla un administrador de la barbería' });
+    }
 
     //Validar servicios si se envian
     if (services !== undefined) {

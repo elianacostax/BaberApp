@@ -9,6 +9,7 @@ import BarberAgenda from './barber/BarberAgenda';
 import BarberClients from './barber/BarberClients';
 import BarberServices from './barber/BarberServices';
 import BarberSchedule from './barber/BarberSchedule';
+import { ModuleNavigation } from "@/components/layout/ModuleNavigation";
 
 export default function BarberDashboard() {
   const { user } = useAuth();
@@ -158,34 +159,7 @@ export default function BarberDashboard() {
   return (
       <div className="space-y-6">
       {/* Navigation */}
-      <div className="bg-card/50 backdrop-blur-sm border border-border rounded-lg p-3 sm:p-4">
-        <div className="flex flex-wrap gap-2 sm:gap-3">
-          {modules.map((module) => {
-            const Icon = module.icon;
-            const isActive = activeModule === module.id;
-            return (
-              <Button
-                key={module.id}
-                variant={isActive ? 'default' : 'outline'}
-                onClick={() => setActiveModule(module.id)}
-                          size="sm"
-                className={`flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm px-2 sm:px-3 py-1.5 sm:py-2 transition-all duration-200 ${
-                  isActive 
-                    ? 'bg-primary text-primary-foreground shadow-md' 
-                    : 'hover:bg-primary/10 hover:text-primary'
-                }`}
-              >
-                <Icon className="h-3 w-3 sm:h-4 sm:w-4" />
-                <span className="hidden xs:inline">{module.label}</span>
-                <span className="xs:hidden">{module.label.split(' ')[0]}</span>
-                {isActive && (
-                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-primary-foreground rounded-full ml-1" />
-                )}
-              </Button>
-            );
-          })}
-        </div>
-      </div>
+      <ModuleNavigation modules={modules} activeModule={activeModule} onChange={setActiveModule} />
 
       {/* Module Content */}
       <div className="min-h-[600px] overflow-y-auto">

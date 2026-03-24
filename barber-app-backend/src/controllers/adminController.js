@@ -10,6 +10,26 @@ const getOwnerBarbershopIds = async (ownerId) => {
     return shops.map(s => s.id);
 };
 
+const hasConfiguredSchedule = (schedule = {}) =>
+    Object.values(schedule || {}).some((entry) => entry?.start && entry?.end);
+
+const getActiveServiceCountForBarber = (barber, barbershop) => {
+    const shopServices = Array.isArray(barbershop?.services) ? barbershop.services : [];
+    const customPrices = barber?.customPrices || {};
+    const customServices = Array.isArray(barber?.customServices) ? barber.customServices : [];
+
+    const activeShopServicesCount = shopServices.filter((service) => {
+        const serviceId = service?.id || service?._id;
+        if (!serviceId) return false;
+        if (service?.isActive === false) return false;
+        return customPrices?.[serviceId]?.isActive === true;
+    }).length;
+
+    const activeCustomServicesCount = customServices.filter((service) => service?.isActive).length;
+
+    return activeShopServicesCount + activeCustomServicesCount;
+};
+
 // Endpoint temporal para cambiar roles
 const changeUserRole = async (req, res) => {
     try {
@@ -409,13 +429,16 @@ const createUser = async (req, res) => {
             }
         }
 
+        const shouldAssignOwnerShop = requesterRole === 'owner' && ['barber', 'client'].includes(role);
+        const userBarbershopId = shouldAssignOwnerShop ? resolvedBarbershopId : (role === 'barber' ? resolvedBarbershopId : undefined);
+
         // Crear nuevo usuario
         const user = await User.create({
             name,
             email,
             password,
             role,
-            barbershopId: role === 'barber' ? resolvedBarbershopId : undefined,
+            barbershopId: userBarbershopId,
             phone,
             isActive
         });
@@ -452,15 +475,19 @@ const updateUser = async (req, res) => {
             });
         }
 
+        let ownerShops = null;
         if (requesterRole === 'owner') {
-            const ownerShops = await getOwnerBarbershopIds(req.user.id);
+            ownerShops = await getOwnerBarbershopIds(req.user.id);
             if (ownerShops.length === 0) return res.status(403).json({ message: 'Owner sin barbería asociada' });
             const targetShopId = user.barbershopId;
-            if (targetShopId && !ownerShops.includes(targetShopId)) {
+            if (!targetShopId || !ownerShops.includes(targetShopId)) {
                 return res.status(403).json({ message: 'No puedes modificar usuarios de otra barbería' });
             }
             if (role && !['barber', 'client'].includes(role)) {
                 return res.status(403).json({ message: 'El owner solo puede asignar roles barber o client' });
+            }
+            if (normalizedBarbershop && !ownerShops.includes(normalizedBarbershop)) {
+                return res.status(403).json({ message: 'No puedes asignar usuarios a otra barbería' });
             }
         }
 
@@ -469,20 +496,33 @@ const updateUser = async (req, res) => {
         if (email !== undefined) user.email = email;
         if (role !== undefined) user.role = role;
 
-        if (role === 'barber') {
+        const effectiveRole = role !== undefined ? role : user.role;
+        if (effectiveRole === 'barber') {
             if (normalizedBarbershop) {
                 const shop = await Barbershop.findByPk(normalizedBarbershop);
                 if (!shop) {
                     return res.status(400).json({ message: 'Barbería no válida' });
                 }
             }
-            if (barbershop !== undefined) user.barbershopId = normalizedBarbershop;
+            if (requesterRole === 'owner') {
+                user.barbershopId = normalizedBarbershop || ownerShops[0];
+            } else if (barbershop !== undefined) {
+                user.barbershopId = normalizedBarbershop;
+            }
+        } else if (effectiveRole === 'client') {
+            if (requesterRole === 'owner') {
+                user.barbershopId = normalizedBarbershop || user.barbershopId || ownerShops[0];
+            } else if (role !== undefined) {
+                user.barbershopId = null;
+            } else if (barbershop !== undefined) {
+                user.barbershopId = normalizedBarbershop;
+            }
         } else if (role !== undefined) {
             user.barbershopId = null;
         } else if (barbershop !== undefined) {
             user.barbershopId = normalizedBarbershop;
         }
-        if (role !== undefined && role !== 'barber' && barbershop === undefined) {
+        if (requesterRole !== 'owner' && role !== undefined && role !== 'barber' && barbershop === undefined) {
             user.barbershopId = null;
         }
         if (phone !== undefined) user.phone = phone;
@@ -524,7 +564,7 @@ const deleteUser = async (req, res) => {
             const ownerShops = await getOwnerBarbershopIds(req.user.id);
             if (ownerShops.length === 0) return res.status(403).json({ message: 'Owner sin barbería asociada' });
             const targetShopId = user.barbershopId;
-            if (targetShopId && !ownerShops.includes(targetShopId)) {
+            if (!targetShopId || !ownerShops.includes(targetShopId)) {
                 return res.status(403).json({ message: 'No puedes eliminar usuarios de otra barbería' });
             }
             if (user.role === 'admin' || user.role === 'owner') {
@@ -611,12 +651,115 @@ const listBarbershopsAdmin = async (req, res) => {
     }
 };
 
+const getBarberOperationalDiagnostics = async (req, res) => {
+    try {
+        const requesterRole = req.user?.role;
+        const { barbershopId } = req.query;
+        let ownerShopIds = null;
+
+        if (requesterRole === 'owner') {
+            ownerShopIds = await getOwnerBarbershopIds(req.user.id);
+            if (ownerShopIds.length === 0) {
+                return res.json({
+                    summary: {
+                        totalBarbers: 0,
+                        withoutActiveServices: 0,
+                        withoutSchedule: 0,
+                        withIssues: 0,
+                    },
+                    barbers: [],
+                });
+            }
+        }
+
+        if (barbershopId && ownerShopIds && !ownerShopIds.includes(barbershopId)) {
+            return res.status(403).json({ message: 'Acceso denegado a esta barbería' });
+        }
+
+        const shopWhere = barbershopId
+            ? { id: barbershopId }
+            : ownerShopIds
+                ? { id: { [Op.in]: ownerShopIds } }
+                : {};
+
+        const barbershops = await Barbershop.findAll({
+            where: shopWhere,
+            attributes: ['id', 'name', 'location', 'services', 'openingHours']
+        });
+        const barbershopsMap = new Map(barbershops.map((shop) => [shop.id, shop]));
+
+        const barbers = await User.findAll({
+            where: {
+                role: 'barber',
+                ...(barbershopId
+                    ? { barbershopId }
+                    : ownerShopIds
+                        ? { barbershopId: { [Op.in]: ownerShopIds } }
+                        : {}),
+            },
+            attributes: [
+                'id',
+                'name',
+                'email',
+                'phone',
+                'isActive',
+                'barbershopId',
+                'schedule',
+                'customPrices',
+                'customServices'
+            ]
+        });
+
+        const diagnostics = barbers.map((barber) => {
+            const barbershop = barbershopsMap.get(barber.barbershopId) || null;
+            const activeServiceCount = getActiveServiceCountForBarber(barber, barbershop);
+            const scheduleConfigured = hasConfiguredSchedule(barber.schedule);
+            const issues = [
+                ...(activeServiceCount === 0 ? ['no_active_services'] : []),
+                ...(!scheduleConfigured ? ['no_schedule'] : []),
+            ];
+
+            return {
+                id: barber.id,
+                name: barber.name,
+                email: barber.email,
+                phone: barber.phone,
+                isActive: barber.isActive,
+                activeServiceCount,
+                hasScheduleConfigured: scheduleConfigured,
+                issues,
+                barbershop: barbershop ? {
+                    id: barbershop.id,
+                    name: barbershop.name,
+                    location: barbershop.location,
+                } : null,
+            };
+        });
+
+        res.json({
+            summary: {
+                totalBarbers: diagnostics.length,
+                withoutActiveServices: diagnostics.filter((barber) => barber.issues.includes('no_active_services')).length,
+                withoutSchedule: diagnostics.filter((barber) => barber.issues.includes('no_schedule')).length,
+                withIssues: diagnostics.filter((barber) => barber.issues.length > 0).length,
+            },
+            barbers: diagnostics.sort((a, b) => {
+                if (a.issues.length !== b.issues.length) return b.issues.length - a.issues.length;
+                return a.name.localeCompare(b.name);
+            }),
+        });
+    } catch (err) {
+        handleError(res, 'Error al obtener diagnóstico operativo de barberos', 500, err);
+    }
+};
+
 module.exports = {
     getDashboardStats,
     getTopBarbers,
     getMonthlyData,
     listUsersAdmin,
     listBarbershopsAdmin,
+    getBarberOperationalDiagnostics,
     createUser,
     updateUser,
     deleteUser,

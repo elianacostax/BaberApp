@@ -13,17 +13,10 @@ const getBarberServices = async (req, res) => {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
-        if (!barber.barbershopId) {
-            return res.status(400).json({ message: "El barbero no está asignado a ninguna barbería" });
-        }
-
-        const barbershop = await Barbershop.findByPk(barber.barbershopId);
-        if (!barbershop) {
-            return res.status(404).json({ message: "Barbería no encontrada" });
-        }
+        const barbershop = barber.barbershopId ? await Barbershop.findByPk(barber.barbershopId) : null;
         
         // Servicios de la barbería (solo los activados por el barbero)
-        const barbershopServices = barbershop.services.map(service => {
+        const barbershopServices = (barbershop?.services || []).map(service => {
             const serviceId = service.id || service._id;
             const customPrice = barber.customPrices?.[serviceId];
             return {
@@ -41,7 +34,7 @@ const getBarberServices = async (req, res) => {
         });
 
         // Servicios personalizados del barbero
-        const customServices = barber.customServices.map(service => ({
+        const customServices = (barber.customServices || []).map(service => ({
             _id: service._id || service.id,
             name: service.name,
             description: service.description,
@@ -58,10 +51,12 @@ const getBarberServices = async (req, res) => {
 
         res.json({
             services: allServices,
-            barbershop: {
-                _id: barbershop.id,
-                name: barbershop.name
-            },
+            barbershop: barbershop
+                ? {
+                    _id: barbershop.id,
+                    name: barbershop.name
+                }
+                : null,
             barber: {
                 _id: barber.id,
                 name: barber.name
@@ -159,7 +154,7 @@ const createCustomService = async (req, res) => {
         const barberId = req.user.id;
         const { name, description, price, duration, category } = req.body;
 
-        if (!name || !price || !duration) {
+        if (!name || price === undefined || duration === undefined) {
             return res.status(400).json({ message: "Nombre, precio y duración son obligatorios" });
         }
 
@@ -169,7 +164,7 @@ const createCustomService = async (req, res) => {
         }
 
         // Verificar que no exista un servicio con el mismo nombre
-        const existingService = barber.customServices.find(service => 
+        const existingService = (barber.customServices || []).find(service => 
             service.name.toLowerCase() === name.toLowerCase()
         );
 

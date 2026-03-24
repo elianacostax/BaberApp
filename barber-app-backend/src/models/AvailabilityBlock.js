@@ -9,9 +9,17 @@ const AvailabilityBlock = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
+    barbershopId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "Barbershops",
+        key: "id",
+      },
+    },
     barberId: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       references: {
         model: "Users",
         key: "id",
@@ -46,10 +54,11 @@ const AvailabilityBlock = sequelize.define(
     tableName: "AvailabilityBlocks",
     timestamps: true,
     indexes: [
-      { fields: ["barberId", "start", "end"] },
-      { fields: ["appliesToAllBarbers", "start", "end"] },
-      { fields: ["start", "end"] },
-      { fields: ["createdById"] },
+      { name: "availability_blocks_barbershop_start_end_idx", fields: ["barbershopId", "start", "end"] },
+      { name: "availability_blocks_barber_start_end_idx", fields: ["barberId", "start", "end"] },
+      { name: "availability_blocks_shop_all_barbers_idx", fields: ["barbershopId", "appliesToAllBarbers", "start", "end"] },
+      { name: "availability_blocks_start_end_idx", fields: ["start", "end"] },
+      { name: "availability_blocks_created_by_idx", fields: ["createdById"] },
     ],
   }
 );

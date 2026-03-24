@@ -1,11 +1,11 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const ENV_API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const API_BASE_URL = ENV_API_BASE_URL?.trim() || 'http://localhost:5000';
 
-if (!API_BASE_URL) {
-  // No lanzamos error duro para permitir desarrollo del resto de la app
-  // pero es recomendable definir VITE_API_BASE_URL en .env
-  console.warn('VITE_API_BASE_URL no está definido. Configura tu .env');
+if (!ENV_API_BASE_URL) {
+  // Fallback para desarrollo local cuando no existe .env en frontend.
+  console.warn('VITE_API_BASE_URL no está definido. Usando http://localhost:5000');
 }
 
 export const api = axios.create({
@@ -46,6 +46,13 @@ api.interceptors.response.use(
         isRateLimit: true,
       });
     }
+
+    if (error.response?.status === 401 && typeof window !== 'undefined') {
+      const token = localStorage.getItem('jwt');
+      if (token) {
+        window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { reason: 'unauthorized' } }));
+      }
+    }
     
     return Promise.reject(error);
   }
@@ -54,4 +61,3 @@ api.interceptors.response.use(
 export type ApiError = {
   message?: string;
 };
-

@@ -27,7 +27,9 @@ import {
   Star,
   Calendar,
   Settings,
-  Scissors
+  Scissors,
+  AlertTriangle,
+  ClipboardList
 } from 'lucide-react';
 
 interface Barbershop {
@@ -70,6 +72,22 @@ interface Barber {
   } | null;
 }
 
+interface BarberDiagnostic {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  isActive: boolean;
+  activeServiceCount: number;
+  hasScheduleConfigured: boolean;
+  issues: Array<'no_active_services' | 'no_schedule'>;
+  barbershop: {
+    id: string;
+    name: string;
+    location?: string;
+  } | null;
+}
+
 export default function AdminBarbershopsManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -86,6 +104,8 @@ export default function AdminBarbershopsManagement() {
   const [assignShopId, setAssignShopId] = useState<string>('');
   const [barberSearch, setBarberSearch] = useState('');
   const [barberFilter, setBarberFilter] = useState<'all' | 'assigned' | 'unassigned' | 'thisShop'>('all');
+  const [diagnosticShopFilter, setDiagnosticShopFilter] = useState<string>('all');
+  const [diagnosticIssueFilter, setDiagnosticIssueFilter] = useState<'all' | 'no_active_services' | 'no_schedule' | 'with_issues'>('with_issues');
 
   // Servicios por barbería
   const [serviceForm, setServiceForm] = useState({
@@ -125,6 +145,24 @@ export default function AdminBarbershopsManagement() {
     queryFn: async () => {
       const response = await api.get('/api/admin/users?role=barber');
       return response.data as Barber[];
+    }
+  });
+
+  const { data: diagnosticsData, isLoading: diagnosticsLoading } = useQuery<{
+    summary: {
+      totalBarbers: number;
+      withoutActiveServices: number;
+      withoutSchedule: number;
+      withIssues: number;
+    };
+    barbers: BarberDiagnostic[];
+  }>({
+    queryKey: ['adminBarberDiagnostics', diagnosticShopFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (diagnosticShopFilter !== 'all') params.append('barbershopId', diagnosticShopFilter);
+      const response = await api.get(`/api/admin/barbers/diagnostics?${params.toString()}`);
+      return response.data;
     }
   });
 
@@ -291,6 +329,13 @@ export default function AdminBarbershopsManagement() {
     if (barberFilter === 'thisShop' && (!assignShopId || currentShopId !== assignShopId)) return false;
 
     return matchesSearch;
+  });
+
+  const filteredDiagnosticBarbers = (diagnosticsData?.barbers || []).filter((barber) => {
+    if (diagnosticIssueFilter === 'with_issues') return barber.issues.length > 0;
+    if (diagnosticIssueFilter === 'no_active_services') return barber.issues.includes('no_active_services');
+    if (diagnosticIssueFilter === 'no_schedule') return barber.issues.includes('no_schedule');
+    return true;
   });
 
   useEffect(() => {
@@ -481,6 +526,124 @@ export default function AdminBarbershopsManagement() {
               <div className="text-sm text-muted-foreground">No hay barberos con ese criterio.</div>
             )}
           </div>
+        </div>
+      </EnhancedCard>
+
+      <EnhancedCard variant="premium" className="p-6">
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <ClipboardList className="h-5 w-5 text-primary" />
+                Diagnóstico Operativo de Barberos
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Detecta barberos sin servicios activos o sin horario configurado.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="rounded-lg border border-border/50 px-3 py-2">
+                <div className="text-xs text-muted-foreground">Barberos</div>
+                <div className="text-xl font-semibold">{diagnosticsData?.summary.totalBarbers || 0}</div>
+              </div>
+              <div className="rounded-lg border border-border/50 px-3 py-2">
+                <div className="text-xs text-muted-foreground">Con problemas</div>
+                <div className="text-xl font-semibold text-amber-600">{diagnosticsData?.summary.withIssues || 0}</div>
+              </div>
+              <div className="rounded-lg border border-border/50 px-3 py-2">
+                <div className="text-xs text-muted-foreground">Sin servicios</div>
+                <div className="text-xl font-semibold text-red-600">{diagnosticsData?.summary.withoutActiveServices || 0}</div>
+              </div>
+              <div className="rounded-lg border border-border/50 px-3 py-2">
+                <div className="text-xs text-muted-foreground">Sin horario</div>
+                <div className="text-xl font-semibold text-orange-600">{diagnosticsData?.summary.withoutSchedule || 0}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label>Barbería</Label>
+              <Select value={diagnosticShopFilter} onValueChange={setDiagnosticShopFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas las barberías" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las barberías</SelectItem>
+                  {(barbershops || []).map((shop) => (
+                    <SelectItem key={getId(shop)} value={getId(shop)}>
+                      {shop.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Problema</Label>
+              <Select value={diagnosticIssueFilter} onValueChange={(value: any) => setDiagnosticIssueFilter(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="with_issues">Solo con problemas</SelectItem>
+                  <SelectItem value="no_active_services">Sin servicios activos</SelectItem>
+                  <SelectItem value="no_schedule">Sin horario configurado</SelectItem>
+                  <SelectItem value="all">Todos</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {diagnosticsLoading ? (
+            <div className="text-sm text-muted-foreground">Cargando diagnóstico...</div>
+          ) : filteredDiagnosticBarbers.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border/60 p-6 text-sm text-muted-foreground">
+              No hay barberos que coincidan con este filtro.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredDiagnosticBarbers.map((barber) => (
+                <div key={barber.id} className="rounded-lg border border-border/50 p-4">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="font-medium">{barber.name}</div>
+                        {!barber.isActive && <Badge variant="secondary">Inactivo</Badge>}
+                        {barber.issues.length > 0 && (
+                          <Badge variant="destructive" className="gap-1">
+                            <AlertTriangle className="h-3 w-3" />
+                            Requiere atención
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-sm text-muted-foreground">{barber.email || 'Sin email'}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {barber.barbershop?.name || 'Sin barbería'}{barber.barbershop?.location ? ` • ${barber.barbershop.location}` : ''}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={barber.activeServiceCount > 0 ? 'default' : 'destructive'}>
+                        {barber.activeServiceCount} servicios activos
+                      </Badge>
+                      <Badge variant={barber.hasScheduleConfigured ? 'default' : 'secondary'}>
+                        {barber.hasScheduleConfigured ? 'Horario configurado' : 'Sin horario'}
+                      </Badge>
+                    </div>
+                  </div>
+                  {barber.issues.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {barber.issues.includes('no_active_services') && (
+                        <Badge variant="outline">Sin servicios activos</Badge>
+                      )}
+                      {barber.issues.includes('no_schedule') && (
+                        <Badge variant="outline">Sin horario configurado</Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </EnhancedCard>
 

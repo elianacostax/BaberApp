@@ -1,9 +1,7 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { Navigate } from "react-router-dom";
-import { Bell, Search, Scissors, LogOut, User } from "lucide-react";
+import { Scissors, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { UserRole } from "@/types";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -52,27 +50,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 </h2>
               </div>
             </div>
-            
-            {/* Search - Hidden on mobile */}
-            <div className="relative max-w-md hidden md:block">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar..."
-                className="pl-10 w-64 bg-background/50"
-              />
+
+            <div className="hidden md:block text-sm text-muted-foreground">
+              {user?.role === "client" && "Reserva, revisa y administra tus citas"}
+              {user?.role === "barber" && "Gestiona tu agenda, servicios y clientes"}
+              {(user?.role === "admin" || user?.role === "owner") && "Administra barberías, barberos, reservas y clientes"}
             </div>
           </div>
           
           {/* Right Side Actions */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Notifications */}
-            <Button variant="ghost" size="sm" className="relative p-2 sm:p-2.5">
-              <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="absolute -top-1 -right-1 h-3 w-3 bg-destructive rounded-full flex items-center justify-center">
-                <span className="text-xs text-white">3</span>
-              </span>
-            </Button>
-            
             {/* User Profile - Responsive */}
             <div className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-card/50">
               <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-r from-primary to-primary/60 flex items-center justify-center">

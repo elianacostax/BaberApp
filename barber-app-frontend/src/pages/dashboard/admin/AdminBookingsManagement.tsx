@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api';
 import { getId } from '@/lib/id';
+import { formatReminderWindow, getSentReminderWindows, isAutoAssignedBooking } from '@/lib/booking-insights';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,6 +68,12 @@ interface Booking {
     duration: number;
   };
   createdAt: string;
+  history?: Array<{
+    type?: string;
+    eventType?: string;
+    assignmentMode?: string;
+    reminderWindowMinutes?: number;
+  }>;
 }
 
 interface Barbershop {
@@ -675,6 +682,16 @@ export default function AdminBookingsManagement() {
                       <span className="font-medium">{booking.user?.name || 'Cliente'}</span>
                     </div>
                     <div className="text-sm text-muted-foreground">{booking.user?.email || 'Sin email'}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {isAutoAssignedBooking(booking) && (
+                        <Badge variant="secondary">Autoasignada</Badge>
+                      )}
+                      {getSentReminderWindows(booking).map((windowMinutes) => (
+                        <Badge key={`${getId(booking)}-${windowMinutes}`} variant="outline">
+                          Recordatorio {formatReminderWindow(windowMinutes)}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
 
                   <div>
@@ -947,6 +964,16 @@ export default function AdminBookingsManagement() {
                   <p className="font-medium">{editingBooking.barbershop?.name || 'Barbería'}</p>
                   <p className="text-muted-foreground">{editingBooking.barbershop?.location || 'Sin ubicación'}</p>
                 </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {isAutoAssignedBooking(editingBooking) && (
+                  <Badge variant="secondary">Asignación automática</Badge>
+                )}
+                {getSentReminderWindows(editingBooking).map((windowMinutes) => (
+                  <Badge key={`editing-${windowMinutes}`} variant="outline">
+                    Recordatorio enviado {formatReminderWindow(windowMinutes)}
+                  </Badge>
+                ))}
               </div>
             </div>
           )}

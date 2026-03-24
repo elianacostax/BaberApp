@@ -2,10 +2,187 @@ const Barbershop = require("../models/Barbershop");
 const AvailabilityBlock = require("../models/AvailabilityBlock");
 const User = require("../models/User");
 const { handleError } = require("../utils/errorHandler");
+const { logger } = require("../utils/logger");
+const { notifyBookingEvent } = require("../utils/bookingNotifications");
+const {
+    parseBookingHistory,
+    appendBookingHistory
+} = require("../utils/bookingHistory");
 const Booking = require('../models/Booking')
 const { DateTime } = require('luxon')
 const { Interval } = require('luxon');
 const { Op } = require("sequelize");
+
+const APP_TIMEZONE = 'America/Bogota';
+const MIN_BOOKING_LEAD_MINUTES = 60;
+const CLIENT_CANCEL_WINDOW_MINUTES = 30;
+const BOOKING_BUFFER_MINUTES = Number(process.env.BOOKING_BUFFER_MINUTES || 10);
+const SLOT_STEP_MINUTES = Number(process.env.BOOKING_SLOT_STEP_MINUTES || 15);
+
+const getLocalDateTime = (date, time) =>
+    DateTime.fromISO(`${date}T${time}`, { zone: APP_TIMEZONE });
+
+const validateBookingLeadTime = (localStart) => {
+    if (!localStart.isValid) {
+        return "Fecha u hora inválida";
+    }
+
+    const now = DateTime.now().setZone(APP_TIMEZONE);
+    if (localStart < now.startOf('day')) {
+        return "No se pueden hacer reservas en fechas pasadas";
+    }
+
+    if (localStart <= now.plus({ minutes: MIN_BOOKING_LEAD_MINUTES })) {
+        return `La reserva debe hacerse con al menos ${MIN_BOOKING_LEAD_MINUTES} minutos de anticipación`;
+    }
+
+    return null;
+};
+
+const resolveBarberWorkingWindow = ({ localDate, barber, barbershop }) => {
+    const dayIndex = localDate.weekday % 7;
+    const fullSchedule = barber?.schedule || {};
+    const barberSchedule = fullSchedule[dayIndex.toString()];
+    const hasAnyConfiguredDay = Object.values(fullSchedule).some((entry) => entry?.start && entry?.end);
+
+    let startLabel = barberSchedule?.start;
+    let endLabel = barberSchedule?.end;
+
+    if (!startLabel || !endLabel) {
+        if (hasAnyConfiguredDay) return null;
+        const openHour = Number(barbershop?.openingHours?.openHour ?? 9);
+        const closeHour = Number(barbershop?.openingHours?.closeHour ?? 18);
+        startLabel = `${String(openHour).padStart(2, "0")}:00`;
+        endLabel = `${String(closeHour).padStart(2, "0")}:00`;
+    }
+
+    if (!startLabel || !endLabel) return null;
+
+    const [startHour, startMinute] = startLabel.split(":").map(Number);
+    const [endHour, endMinute] = endLabel.split(":").map(Number);
+    if ([startHour, startMinute, endHour, endMinute].some((v) => Number.isNaN(v))) {
+        return null;
+    }
+
+    const windowStart = localDate.set({ hour: startHour, minute: startMinute, second: 0, millisecond: 0 });
+    const windowEnd = localDate.set({ hour: endHour, minute: endMinute, second: 0, millisecond: 0 });
+    if (!windowStart.isValid || !windowEnd.isValid || windowEnd <= windowStart) {
+        return null;
+    }
+
+    return { windowStart, windowEnd, startLabel, endLabel };
+};
+
+const getEffectiveStatus = (bookingLike) => {
+    if (bookingLike.status !== 'pending') return bookingLike.status;
+
+    const now = DateTime.now().setZone(APP_TIMEZONE);
+    const start = bookingLike.startTime
+        ? DateTime.fromJSDate(new Date(bookingLike.startTime), { zone: APP_TIMEZONE })
+        : getLocalDateTime(bookingLike.date, bookingLike.time);
+
+    if (!start.isValid) return bookingLike.status;
+    return start < now ? 'expired' : bookingLike.status;
+};
+
+const serializeBooking = (booking) => {
+    const plain = typeof booking.get === 'function' ? booking.get({ plain: true }) : { ...booking };
+    const { cleanNotes, history } = parseBookingHistory(plain.notes || '');
+    const status = getEffectiveStatus(plain);
+
+    return {
+        ...plain,
+        notes: cleanNotes,
+        history,
+        originalStatus: plain.status,
+        isExpired: status === 'expired',
+        status
+    };
+};
+
+const serializeBookings = (bookings = []) => bookings.map(serializeBooking);
+
+const getOwnerBarbershopIds = async (ownerId) => {
+    const shops = await Barbershop.findAll({
+        where: { ownerId },
+        attributes: ["id"]
+    });
+    return shops.map((shop) => shop.id);
+};
+
+const buildAvailabilityBlockWhere = ({ barberId, barbershopId, startTime, endTime }) => ({
+    [Op.or]: [
+        { barberId },
+        {
+            appliesToAllBarbers: true,
+            ...(barbershopId ? { barbershopId } : {})
+        }
+    ],
+    start: { [Op.lt]: endTime },
+    end: { [Op.gt]: startTime }
+});
+
+const withBufferMinutes = (date, minutes = BOOKING_BUFFER_MINUTES) =>
+    new Date(new Date(date).getTime() + minutes * 60 * 1000);
+
+const withNegativeBufferMinutes = (date, minutes = BOOKING_BUFFER_MINUTES) =>
+    new Date(new Date(date).getTime() - minutes * 60 * 1000);
+
+const triggerBookingNotification = (bookingId, eventType, payload = {}) => {
+    notifyBookingEvent({ bookingId, eventType, payload }).catch((error) => {
+        logger.error("Booking notification dispatch failed", {
+            bookingId,
+            eventType,
+            error: error.message
+        });
+    });
+};
+
+const ensureClientAssignmentForBarbershop = async ({
+    client,
+    barbershopId,
+    actorRole,
+    allowAdminOverride = false
+}) => {
+    if (!client || client.role !== "client") {
+        throw new Error("Cliente no válido");
+    }
+
+    if (!client.barbershopId) {
+        client.barbershopId = barbershopId;
+        await client.save();
+        return { assigned: true, changed: true };
+    }
+
+    if (client.barbershopId === barbershopId) {
+        return { assigned: true, changed: false };
+    }
+
+    if (actorRole === "admin" && allowAdminOverride) {
+        client.barbershopId = barbershopId;
+        await client.save();
+        return { assigned: true, changed: true };
+    }
+
+    return { assigned: false, changed: false };
+};
+
+const hasBufferedBookingConflict = async ({ barberId, startTime, endTime, excludeBookingId = null }) => {
+    const candidateEndWithBuffer = withBufferMinutes(endTime);
+    const candidateStartWithBuffer = withNegativeBufferMinutes(startTime);
+
+    const overlappingBooking = await Booking.findOne({
+        where: {
+            barberId,
+            ...(excludeBookingId ? { id: { [Op.ne]: excludeBookingId } } : {}),
+            status: { [Op.in]: ["pending", "confirmed"] },
+            startTime: { [Op.lt]: candidateEndWithBuffer },
+            endTime: { [Op.gt]: candidateStartWithBuffer }
+        }
+    });
+
+    return overlappingBooking;
+};
 
 // Helper function para obtener servicio y precio
 const getServiceAndPrice = async (serviceId, barberId, barbershopId) => {
@@ -47,24 +224,248 @@ const getServiceAndPrice = async (serviceId, barberId, barbershopId) => {
     };
 };
 
+const getServiceContextForBarber = async ({ serviceId, barberId, barbershopId }) => {
+    const { service, price } = await getServiceAndPrice(serviceId, barberId, barbershopId);
+    return {
+        service,
+        price,
+        duration: Number(service.duration),
+        name: service.name
+    };
+};
+
+const getBufferedReservedIntervalsForBarber = async ({ barberId, dayStart, dayEnd }) => {
+    const bookings = await Booking.findAll({
+        where: {
+            barberId,
+            status: { [Op.in]: ["pending", "confirmed"] },
+            startTime: { [Op.lt]: dayEnd.toJSDate() },
+            endTime: { [Op.gt]: dayStart.toJSDate() }
+        }
+    });
+
+    return {
+        bookings,
+        intervals: bookings.map((booking) =>
+            Interval.fromDateTimes(
+                DateTime.fromJSDate(new Date(booking.startTime), { zone: APP_TIMEZONE }),
+                DateTime.fromJSDate(withBufferMinutes(booking.endTime), { zone: APP_TIMEZONE })
+            )
+        )
+    };
+};
+
+const getBlockedIntervalsForBarber = async ({ barberId, barbershopId, dayStart, dayEnd }) => {
+    const blocks = await AvailabilityBlock.findAll({
+        where: {
+            [Op.or]: [
+                { appliesToAllBarbers: true, barbershopId },
+                { barberId }
+            ],
+            start: { [Op.lt]: dayEnd.toJSDate() },
+            end: { [Op.gt]: dayStart.toJSDate() }
+        }
+    });
+
+    return blocks.map((block) =>
+        Interval.fromDateTimes(
+            DateTime.fromJSDate(new Date(block.start), { zone: APP_TIMEZONE }),
+            DateTime.fromJSDate(new Date(block.end), { zone: APP_TIMEZONE })
+        )
+    );
+};
+
+const buildAvailableSlotsForBarber = async ({ barber, barbershop, serviceId, date }) => {
+    const serviceContext = await getServiceContextForBarber({
+        serviceId,
+        barberId: barber.id,
+        barbershopId: barbershop.id
+    });
+
+    if (!serviceContext.duration || serviceContext.duration <= 0) {
+        return { slots: [], serviceContext };
+    }
+
+    const requestedDate = DateTime.fromISO(date, { zone: APP_TIMEZONE });
+    const dayStart = requestedDate.startOf("day");
+    const dayEnd = requestedDate.endOf("day");
+
+    const workingWindow = resolveBarberWorkingWindow({
+        localDate: requestedDate,
+        barber,
+        barbershop
+    });
+    if (!workingWindow) {
+        return { slots: [], serviceContext };
+    }
+
+    const shopOpenHour = Number(barbershop.openingHours?.openHour ?? 9);
+    const shopCloseHour = Number(barbershop.openingHours?.closeHour ?? 18);
+    const shopStart = requestedDate.set({ hour: shopOpenHour, minute: 0, second: 0, millisecond: 0 });
+    const shopEnd = requestedDate.set({ hour: shopCloseHour, minute: 0, second: 0, millisecond: 0 });
+    const workingStart = workingWindow.windowStart > shopStart ? workingWindow.windowStart : shopStart;
+    const workingEnd = workingWindow.windowEnd < shopEnd ? workingWindow.windowEnd : shopEnd;
+
+    if (!workingStart.isValid || !workingEnd.isValid || workingEnd <= workingStart) {
+        return { slots: [], serviceContext };
+    }
+
+    const allSlots = [];
+    let current = workingStart;
+    while (current.plus({ minutes: serviceContext.duration + BOOKING_BUFFER_MINUTES }) <= workingEnd) {
+        allSlots.push({
+            start: current,
+            end: current.plus({ minutes: serviceContext.duration }),
+        });
+        current = current.plus({ minutes: SLOT_STEP_MINUTES });
+    }
+
+    const { bookings, intervals: reservedIntervals } = await getBufferedReservedIntervalsForBarber({
+        barberId: barber.id,
+        dayStart,
+        dayEnd
+    });
+    const blockedIntervals = await getBlockedIntervalsForBarber({
+        barberId: barber.id,
+        barbershopId: barbershop.id,
+        dayStart,
+        dayEnd
+    });
+
+    const now = DateTime.now().setZone(APP_TIMEZONE);
+    const minAllowedStart = now.plus({ minutes: MIN_BOOKING_LEAD_MINUTES });
+    const slots = allSlots
+        .filter((slot) => {
+            const slotInterval = Interval.fromDateTimes(
+                slot.start,
+                slot.end.plus({ minutes: BOOKING_BUFFER_MINUTES })
+            );
+
+            const overlapsReservation = reservedIntervals.some((reserved) => reserved.overlaps(slotInterval));
+            const overlapsBlock = blockedIntervals.some((blocked) => blocked.overlaps(slotInterval));
+            const isPastSlot = slot.start <= minAllowedStart;
+
+            return !overlapsReservation && !overlapsBlock && !isPastSlot;
+        })
+        .map((slot) => ({
+            start: slot.start.toISO(),
+            end: slot.end.toISO(),
+        }));
+
+    return {
+        slots,
+        serviceContext,
+        activeBookingsCount: bookings.length
+    };
+};
+
+const recommendBarberForBooking = async ({ barbershopId, serviceId, date, preferredTime }) => {
+    const barbershop = await Barbershop.findByPk(barbershopId);
+    if (!barbershop) {
+        throw new Error("Barbería no encontrada");
+    }
+
+    const barbers = await User.findAll({
+        where: {
+            role: "barber",
+            isActive: true,
+            barbershopId
+        },
+        attributes: ["id", "name", "phone", "email", "schedule", "barbershopId", "customPrices", "customServices"]
+    });
+
+    const preferredDateTime = preferredTime
+        ? getLocalDateTime(date, preferredTime)
+        : null;
+
+    const candidates = [];
+
+    for (const barber of barbers) {
+        try {
+            const availability = await buildAvailableSlotsForBarber({
+                barber,
+                barbershop,
+                serviceId,
+                date
+            });
+
+            if (!availability.slots.length) continue;
+
+            const exactSlot = preferredTime
+                ? availability.slots.find((slot) => DateTime.fromISO(slot.start, { zone: APP_TIMEZONE }).toFormat("HH:mm") === preferredTime)
+                : null;
+            const firstSlot = availability.slots[0];
+            const chosenSlot = exactSlot || firstSlot;
+            const slotStart = DateTime.fromISO(chosenSlot.start, { zone: APP_TIMEZONE });
+            const minutesOffset = preferredDateTime?.isValid
+                ? Math.abs(Math.round(slotStart.diff(preferredDateTime, "minutes").minutes))
+                : 0;
+
+            candidates.push({
+                barber: {
+                    id: barber.id,
+                    name: barber.name,
+                    phone: barber.phone,
+                    email: barber.email
+                },
+                firstAvailableSlot: firstSlot,
+                matchingSlot: exactSlot,
+                availableSlotsCount: availability.slots.length,
+                activeBookingsCount: availability.activeBookingsCount || 0,
+                score: [
+                    exactSlot ? 0 : 1,
+                    minutesOffset,
+                    availability.activeBookingsCount || 0
+                ],
+            });
+        } catch {
+            // Si el barbero no ofrece el servicio o tiene configuración inválida, se omite.
+        }
+    }
+
+    candidates.sort((a, b) => {
+        for (let i = 0; i < a.score.length; i += 1) {
+            if (a.score[i] !== b.score[i]) return a.score[i] - b.score[i];
+        }
+        return a.barber.name.localeCompare(b.barber.name);
+    });
+
+    return {
+        recommended: candidates[0] || null,
+        candidates
+    };
+};
+
 //Crear una reserva
 const createBooking = async (req, res) => {
     try {
         const userId = req.user.id;
+        const userRole = req.user.role;
         const { barbershop, barber, serviceId, date, time } = req.body;
+        const wasAutoAssigned = !barber;
+        let resolvedBarberId = barber;
 
-        if (!barbershop || !barber || !serviceId || !date || !time) {
+        if (!barbershop || !serviceId || !date || !time) {
             return res.status(400).json({ message: "Faltan campos obligatorios" });
         }
 
-        // Validar que la fecha sea futura
-        const requestedDate = DateTime.fromISO(date);
-        if (requestedDate < DateTime.now().startOf('day')) {
-            return res.status(400).json({ message: "No se pueden hacer reservas en fechas pasadas" });
+        if (!resolvedBarberId) {
+            const recommendation = await recommendBarberForBooking({
+                barbershopId: barbershop,
+                serviceId,
+                date,
+                preferredTime: time
+            });
+
+            if (!recommendation.recommended?.matchingSlot) {
+                return res.status(400).json({ message: "No hay un barbero disponible para ese servicio y horario" });
+            }
+
+            resolvedBarberId = recommendation.recommended.barber.id;
         }
 
         // Validar barbero
-        const dataBarber = await User.findByPk(barber);
+        const dataBarber = await User.findByPk(resolvedBarberId);
         if (!dataBarber || dataBarber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
@@ -74,17 +475,37 @@ const createBooking = async (req, res) => {
         if (!barbershopData) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
+        if (dataBarber.barbershopId !== barbershop) {
+            return res.status(400).json({ message: "El barbero no pertenece a la barbería seleccionada" });
+        }
+
+        const clientUser = await User.findByPk(userId);
+        if (!clientUser || clientUser.role !== "client") {
+            return res.status(403).json({ message: "Solo los clientes pueden crear reservas en este endpoint" });
+        }
+
+        const clientAssignment = await ensureClientAssignmentForBarbershop({
+            client: clientUser,
+            barbershopId: barbershop,
+            actorRole: userRole
+        });
+        if (!clientAssignment.assigned) {
+            return res.status(403).json({
+                message: "Tu cuenta ya está asociada a otra barbería. Contacta al administrador para moverla."
+            });
+        }
 
         // Obtener servicio y precio usando la función helper
         try {
-            const { service: selectedService, price: servicePrice, serviceSource } = await getServiceAndPrice(serviceId, barber, barbershop);
+            const { service: selectedService, price: servicePrice, serviceSource } = await getServiceAndPrice(serviceId, resolvedBarberId, barbershop);
             const { name: serviceName, duration } = selectedService;
             const price = servicePrice;
 
 
         // Calcular tiempos
-        const localStart = DateTime.fromISO(`${date}T${time}`, { zone: 'America/Bogota' });
-        if (!localStart.isValid) return res.status(400).json({ message: "Fecha u hora inválida" });
+        const localStart = getLocalDateTime(date, time);
+        const leadTimeError = validateBookingLeadTime(localStart);
+        if (leadTimeError) return res.status(400).json({ message: leadTimeError });
 
         const localEnd = localStart.plus({ minutes: selectedService.duration });
         const startTime = localStart.toUTC().toJSDate();
@@ -92,11 +513,12 @@ const createBooking = async (req, res) => {
 
         // Validar bloqueos de disponibilidad del barbero
         const overlappingBlock = await AvailabilityBlock.findOne({
-            where: {
-                barberId: barber,
-                start: { [Op.lt]: endTime },
-                end: { [Op.gt]: startTime }
-            }
+            where: buildAvailabilityBlockWhere({
+                barberId: resolvedBarberId,
+                barbershopId: barbershop,
+                startTime,
+                endTime
+            })
         });
 
         if (overlappingBlock) {
@@ -117,48 +539,35 @@ const createBooking = async (req, res) => {
         }
 
         // Validar solapamiento
-        const overlappingBooking = await Booking.findOne({
-            where: {
-                barberId: barber,
-                status: { [Op.in]: ["pending", "confirmed"] },
-                startTime: { [Op.lt]: endTime },
-                endTime: { [Op.gt]: startTime }
-            }
+        const overlappingBooking = await hasBufferedBookingConflict({
+            barberId: resolvedBarberId,
+            startTime,
+            endTime
         });
 
         if (overlappingBooking) {
             return res.status(400).json({ message: "Ya existe una reserva en este rango de tiempo" });
         }
 
-        // Validar horario del barbero
-        const barberData = await User.findByPk(barber);
-        if (!barberData || barberData.role !== 'barber') {
-            return res.status(404).json({ message: "Barbero no encontrado" });
+        const workingWindow = resolveBarberWorkingWindow({
+            localDate: localStart,
+            barber: dataBarber,
+            barbershop: barbershopData
+        });
+        if (!workingWindow) {
+            return res.status(400).json({ message: `No hay horario disponible para el barbero ese día` });
         }
 
-        // Usar índice numérico del día (Mon=1..Sun=7) y normalizar a 0..6 (Sun=0)
-        const dayIndex = localStart.weekday % 7; // 0..6
-        const schedule = barberData.schedule || {};
-        const barberSchedule = schedule[dayIndex.toString()];
-        if (!barberSchedule || !barberSchedule.start || !barberSchedule.end) {
-            return res.status(400).json({ message: `El barbero no trabaja ese día` });
-        }
-
-        const [startHour, startMinute] = barberSchedule.start.split(":").map(Number);
-        const [endHour, endMinute] = barberSchedule.end.split(":").map(Number);
-        const barberStart = localStart.set({ hour: startHour, minute: startMinute });
-        const barberEnd = localStart.set({ hour: endHour, minute: endMinute });
-
-        if (localStart < barberStart || localEnd > barberEnd) {
+        if (localStart < workingWindow.windowStart || localEnd > workingWindow.windowEnd) {
             return res.status(400).json({
-                message: `El barbero solo trabaja entre ${barberSchedule.start} y ${barberSchedule.end}`
+                message: `El barbero solo trabaja entre ${workingWindow.startLabel} y ${workingWindow.endLabel}`
             });
         }
 
             // Crear reserva
             const booking = await Booking.create({
                 userId: userId,
-                barberId: barber,
+                barberId: resolvedBarberId,
                 barbershopId: barbershop,
                 date,
                 time,
@@ -167,8 +576,17 @@ const createBooking = async (req, res) => {
                 serviceName: selectedService.name,
                 servicePrice: price,
                 serviceDuration: selectedService.duration,
-                status: "pending"
+                status: "confirmed",
+                createdById: userId
             });
+            appendBookingHistory(booking, {
+                type: "created",
+                actorId: userId,
+                actorRole: userRole,
+                status: booking.status,
+                assignmentMode: wasAutoAssigned ? "auto" : "manual"
+            });
+            await booking.save();
 
             // Cargar relaciones para respuesta
             await booking.reload({
@@ -178,7 +596,8 @@ const createBooking = async (req, res) => {
                 ]
             });
 
-            res.status(201).json({ message: "Reserva creada correctamente", booking });
+            triggerBookingNotification(booking.id, "booking_created", { status: booking.status });
+            res.status(201).json({ message: "Reserva creada correctamente", booking: serializeBooking(booking) });
 
         } catch (serviceError) {
             return res.status(404).json({ message: serviceError.message });
@@ -208,6 +627,22 @@ const repeatBooking = async (req, res) => {
             return res.status(403).json({ message: "No tienes permiso para repetir esta reserva" });
         }
 
+        const clientUser = await User.findByPk(userId);
+        if (!clientUser || clientUser.role !== "client") {
+            return res.status(403).json({ message: "Solo los clientes pueden repetir reservas" });
+        }
+
+        const clientAssignment = await ensureClientAssignmentForBarbershop({
+            client: clientUser,
+            barbershopId: originalBooking.barbershopId,
+            actorRole: req.user.role
+        });
+        if (!clientAssignment.assigned) {
+            return res.status(403).json({
+                message: "Tu cuenta ya está asociada a otra barbería. Contacta al administrador para moverla."
+            });
+        }
+
         // Verificar existencia del barbero y barbería
         const barber = await User.findByPk(originalBooking.barberId);
         const barbershop = await Barbershop.findByPk(originalBooking.barbershopId);
@@ -221,9 +656,10 @@ const repeatBooking = async (req, res) => {
         }
 
         // Validar horario del servicio
-        const localStart = DateTime.fromISO(`${newDate}T${newTime}`, { zone: "America/Bogota" });
-        if (!localStart.isValid) {
-            return res.status(400).json({ message: "Fecha u hora inválida" });
+        const localStart = getLocalDateTime(newDate, newTime);
+        const leadTimeError = validateBookingLeadTime(localStart);
+        if (leadTimeError) {
+            return res.status(400).json({ message: leadTimeError });
         }
 
         const localEnd = localStart.plus({ minutes: originalBooking.serviceDuration });
@@ -232,11 +668,12 @@ const repeatBooking = async (req, res) => {
 
         // Validar bloqueos de disponibilidad del barbero
         const overlappingBlock = await AvailabilityBlock.findOne({
-            where: {
+            where: buildAvailabilityBlockWhere({
                 barberId: originalBooking.barberId,
-                start: { [Op.lt]: endTime },
-                end: { [Op.gt]: startTime }
-            }
+                barbershopId: originalBooking.barbershopId,
+                startTime,
+                endTime
+            })
         });
 
         if (overlappingBlock) {
@@ -246,13 +683,10 @@ const repeatBooking = async (req, res) => {
         }
 
         // Validar solapamientos
-        const overlapping = await Booking.findOne({
-            where: {
-                barberId: originalBooking.barberId,
-                status: { [Op.in]: ["pending", "confirmed"] },
-                startTime: { [Op.lt]: endTime },
-                endTime: { [Op.gt]: startTime }
-            }
+        const overlapping = await hasBufferedBookingConflict({
+            barberId: originalBooking.barberId,
+            startTime,
+            endTime
         });
 
         if (overlapping) {
@@ -271,10 +705,20 @@ const repeatBooking = async (req, res) => {
             serviceName: originalBooking.serviceName,
             servicePrice: originalBooking.servicePrice,
             serviceDuration: originalBooking.serviceDuration,
-            status: "pending"
+            status: "confirmed",
+            createdById: userId
         });
+        appendBookingHistory(newBooking, {
+            type: "repeated",
+            actorId: userId,
+            actorRole: req.user.role,
+            sourceBookingId: originalBookingId,
+            status: newBooking.status
+        });
+        await newBooking.save();
 
-        res.status(201).json({ message: "Reserva repetida correctamente", booking: newBooking });
+        triggerBookingNotification(newBooking.id, "booking_repeated", { sourceBookingId: originalBookingId });
+        res.status(201).json({ message: "Reserva repetida correctamente", booking: serializeBooking(newBooking) });
 
     } catch (err) {
         handleError(res, 'Error al repetir la reserva', 500, err);
@@ -290,11 +734,12 @@ const getAllBookings = async (req, res) => {
 
         const where = {};
 
+        let ownerShopIds = null;
+
         if (role === 'barber') {
             where.barberId = userId;
         } else if (role === 'owner') {
-            const ownerShops = await Barbershop.findAll({ where: { ownerId: userId }, attributes: ["id"] });
-            const ownerShopIds = ownerShops.map(s => s.id);
+            ownerShopIds = await getOwnerBarbershopIds(userId);
             if (ownerShopIds.length === 0) {
                 return res.status(200).json([]);
             }
@@ -308,7 +753,12 @@ const getAllBookings = async (req, res) => {
             const resolvedBarberId = barberId || barber;
             const resolvedUserId = userIdFilter || user;
 
-            if (resolvedBarbershopId) where.barbershopId = resolvedBarbershopId;
+            if (resolvedBarbershopId) {
+                if (role === 'owner' && ownerShopIds && !ownerShopIds.includes(resolvedBarbershopId)) {
+                    return res.status(403).json({ message: "No autorizado para consultar reservas de esa barbería" });
+                }
+                where.barbershopId = resolvedBarbershopId;
+            }
             if (resolvedBarberId) where.barberId = resolvedBarberId;
             if (resolvedUserId) where.userId = resolvedUserId;
         } else if (role === 'barber') {
@@ -357,7 +807,7 @@ const getAllBookings = async (req, res) => {
             ...(Number.isFinite(parsedLimit) && parsedLimit > 0 ? { limit: parsedLimit } : {})
         });
 
-        res.status(200).json(bookings);
+        res.status(200).json(serializeBookings(bookings));
     } catch (err) {
         handleError(res, 'Error al obtener reservas', 500, err);
     }
@@ -369,7 +819,7 @@ const getUserBookings = async (req, res) => {
         const userId = req.user.id;
         const { type = "upcoming" } = req.query;
 
-        const today = DateTime.now().toISODate();
+        const today = DateTime.now().setZone(APP_TIMEZONE).toISODate();
 
         const where = { userId };
 
@@ -388,7 +838,7 @@ const getUserBookings = async (req, res) => {
             order: [["date", type === "upcoming" ? "ASC" : "DESC"]]
         });
 
-        res.json({ bookings });
+        res.json({ bookings: serializeBookings(bookings) });
     } catch (err) {
         handleError(res, 'Error al obtener reservas', 500, err);
     }
@@ -410,7 +860,7 @@ const getBarberAgenda = async (req, res) => {
             return res.status(400).json({ message: "El parámetro 'type' debe ser 'day' o 'week'" });
         }
 
-        const parseDate = DateTime.fromISO(date, { zone: "America/Bogota" });
+        const parseDate = DateTime.fromISO(date, { zone: APP_TIMEZONE });
         if (!parseDate.isValid) {
             return res.status(400).json({ message: "Formato  de fecha invalido" });
         }
@@ -435,7 +885,7 @@ const getBarberAgenda = async (req, res) => {
 
         // Procesar bookings para incluir datos de walk-in
         const processedBookings = bookings.map(booking => {
-            const bookingObj = booking.get({ plain: true });
+            const bookingObj = serializeBooking(booking);
             
             // Si no hay usuario registrado, usar datos de walkInClient
             if (!bookingObj.user && bookingObj.walkInClient) {
@@ -530,15 +980,15 @@ const updateBookingStatus = async (req, res) => {
                     return res.status(403).json({ message: "Solo el barbero o admin puede confirmar una reserva" });
                 }
 
-                // Validar que no se pueda cancelar una reserva muy próxima (menos de 2 horas)
+                // Validar que no se pueda cancelar una reserva muy próxima
                 if (newStatus === "cancelled") {
-                    const bookingDateTime = DateTime.fromISO(`${booking.date}T${booking.time}`, { zone: 'America/Bogota' });
-                    const now = DateTime.now().setZone('America/Bogota');
-                    const timeDiff = bookingDateTime.diff(now, 'hours').hours;
+                    const bookingDateTime = getLocalDateTime(booking.date, booking.time);
+                    const now = DateTime.now().setZone(APP_TIMEZONE);
+                    const timeDiffInMinutes = bookingDateTime.diff(now, 'minutes').minutes;
 
-                    if (timeDiff < 2 && !isAdmin) {
+                    if (timeDiffInMinutes < CLIENT_CANCEL_WINDOW_MINUTES && !isAdmin) {
                         return res.status(400).json({ 
-                            message: "No se puede cancelar una reserva con menos de 2 horas de anticipación" 
+                            message: `No se puede cancelar una reserva con menos de ${CLIENT_CANCEL_WINDOW_MINUTES} minutos de anticipación`
                         });
                     }
                 }
@@ -560,14 +1010,20 @@ const updateBookingStatus = async (req, res) => {
             if (!barbershop) {
                 return res.status(404).json({ message: "Barbería no encontrada" });
             }
+            if (barber.barbershopId !== booking.barbershopId) {
+                return res.status(400).json({ message: "El barbero debe pertenecer a la misma barbería de la reserva" });
+            }
 
-            const localStart = DateTime.fromISO(`${newDate}T${newStartTime}`, { zone: 'America/Bogota' });
+            const localStart = getLocalDateTime(newDate, newStartTime);
             if (!localStart.isValid) {
                 return res.status(400).json({ message: "Fecha u hora inválida" });
             }
+            if (localStart <= DateTime.now().setZone(APP_TIMEZONE).plus({ minutes: MIN_BOOKING_LEAD_MINUTES })) {
+                return res.status(400).json({ message: `La reserva debe hacerse con al menos ${MIN_BOOKING_LEAD_MINUTES} minutos de anticipación` });
+            }
 
             const localEnd = newEndTime
-                ? DateTime.fromISO(`${newDate}T${newEndTime}`, { zone: 'America/Bogota' })
+                ? getLocalDateTime(newDate, newEndTime)
                 : localStart.plus({ minutes: booking.serviceDuration || 0 });
             if (!localEnd.isValid) {
                 return res.status(400).json({ message: "Hora de fin inválida" });
@@ -592,31 +1048,29 @@ const updateBookingStatus = async (req, res) => {
             }
 
             // Validar horario del barbero
-            const dayIndex = localStart.weekday % 7;
-            const schedule = barber.schedule || {};
-            const barberSchedule = schedule[dayIndex.toString()];
-            if (!barberSchedule || !barberSchedule.start || !barberSchedule.end) {
-                return res.status(400).json({ message: `El barbero no trabaja ese día` });
+            const workingWindow = resolveBarberWorkingWindow({
+                localDate: localStart,
+                barber,
+                barbershop
+            });
+            if (!workingWindow) {
+                return res.status(400).json({ message: `No hay horario disponible para el barbero ese día` });
             }
 
-            const [startHour, startMinute] = barberSchedule.start.split(":").map(Number);
-            const [endHour, endMinute] = barberSchedule.end.split(":").map(Number);
-            const barberStart = localStart.set({ hour: startHour, minute: startMinute });
-            const barberEnd = localStart.set({ hour: endHour, minute: endMinute });
-
-            if (localStart < barberStart || localEnd > barberEnd) {
+            if (localStart < workingWindow.windowStart || localEnd > workingWindow.windowEnd) {
                 return res.status(400).json({
-                    message: `El barbero solo trabaja entre ${barberSchedule.start} y ${barberSchedule.end}`
+                    message: `El barbero solo trabaja entre ${workingWindow.startLabel} y ${workingWindow.endLabel}`
                 });
             }
 
             // Validar bloqueos de disponibilidad del barbero
             const overlappingBlock = await AvailabilityBlock.findOne({
-                where: {
+                where: buildAvailabilityBlockWhere({
                     barberId: newBarberId,
-                    start: { [Op.lt]: endDateUtc },
-                    end: { [Op.gt]: startDateUtc }
-                }
+                    barbershopId: booking.barbershopId,
+                    startTime: startDateUtc,
+                    endTime: endDateUtc
+                })
             });
 
             if (overlappingBlock) {
@@ -626,14 +1080,11 @@ const updateBookingStatus = async (req, res) => {
             }
 
             // Validar solapamiento con otras reservas activas
-            const overlappingBooking = await Booking.findOne({
-                where: {
-                    id: { [Op.ne]: booking.id },
-                    barberId: newBarberId,
-                    status: { [Op.in]: ["pending", "confirmed"] },
-                    startTime: { [Op.lt]: endDateUtc },
-                    endTime: { [Op.gt]: startDateUtc }
-                }
+            const overlappingBooking = await hasBufferedBookingConflict({
+                barberId: newBarberId,
+                startTime: startDateUtc,
+                endTime: endDateUtc,
+                excludeBookingId: booking.id
             });
 
             if (overlappingBooking) {
@@ -656,7 +1107,14 @@ const updateBookingStatus = async (req, res) => {
         }
 
         // Registrar quién lo modificó
-        booking.modifiedBy = userId;
+        booking.modifiedById = userId;
+        appendBookingHistory(booking, {
+            type: status !== undefined ? "status_change" : "updated",
+            actorId: userId,
+            actorRole: userRole,
+            previousStatus,
+            newStatus: booking.status
+        });
         await booking.save();
 
         // Cargar relaciones para respuesta
@@ -669,9 +1127,13 @@ const updateBookingStatus = async (req, res) => {
         });
 
         const updatedStatus = booking.status;
+        triggerBookingNotification(booking.id, "booking_status_changed", {
+            previousStatus,
+            newStatus: updatedStatus
+        });
         res.json({ 
             message: status !== undefined ? `Estado actualizado a '${updatedStatus}' correctamente` : "Reserva actualizada correctamente",
-            booking,
+            booking: serializeBooking(booking),
             ...(status !== undefined ? { previousStatus, newStatus: updatedStatus } : {})
         });
     } catch (err) {
@@ -699,19 +1161,27 @@ const cancelBooking = async (req, res) => {
             return res.status(400).json({ message: "No se puede cancelar esta reserva" });
         }
 
-        // Validar que no se pueda cancelar una reserva muy próxima (menos de 2 horas)
-        const bookingDateTime = DateTime.fromISO(`${booking.date}T${booking.time}`, { zone: 'America/Bogota' });
-        const now = DateTime.now().setZone('America/Bogota');
-        const timeDiff = bookingDateTime.diff(now, 'hours').hours;
+        // Validar ventana mínima para cancelar
+        const bookingDateTime = getLocalDateTime(booking.date, booking.time);
+        const now = DateTime.now().setZone(APP_TIMEZONE);
+        const timeDiffInMinutes = bookingDateTime.diff(now, 'minutes').minutes;
 
-        if (timeDiff < 2) {
+        if (timeDiffInMinutes < CLIENT_CANCEL_WINDOW_MINUTES) {
             return res.status(400).json({ 
-                message: "No se puede cancelar una reserva con menos de 2 horas de anticipación. Contacta al barbero o administrador." 
+                message: `No se puede cancelar una reserva con menos de ${CLIENT_CANCEL_WINDOW_MINUTES} minutos de anticipación. Contacta al barbero o administrador.`
             });
         }
 
+        const previousStatus = booking.status;
         booking.status = "cancelled";
-        booking.modifiedBy = userId;
+        booking.modifiedById = userId;
+        appendBookingHistory(booking, {
+            type: "cancelled_by_client",
+            actorId: userId,
+            actorRole: req.user.role,
+            previousStatus,
+            newStatus: "cancelled"
+        });
         await booking.save();
 
         // Cargar relaciones para respuesta
@@ -723,9 +1193,13 @@ const cancelBooking = async (req, res) => {
             ]
         });
 
+        triggerBookingNotification(booking.id, "booking_cancelled", {
+            previousStatus,
+            newStatus: "cancelled"
+        });
         res.json({ 
             message: "Reserva cancelada correctamente", 
-            booking,
+            booking: serializeBooking(booking),
             cancelledAt: new Date().toISOString()
         });
     } catch (err) {
@@ -772,12 +1246,10 @@ const getAvailableSlots = async (req, res) => {
             return res.status(400).json({ message: "barbershopId, barberId, serviceId y date son obligatorios" });
         }
 
-        const requestedDate = DateTime.fromISO(date, { zone: "America/Bogota" });
+        const requestedDate = DateTime.fromISO(date, { zone: APP_TIMEZONE });
         if (!requestedDate.isValid) {
             return res.status(400).json({ message: "Fecha inválida. Usa formato YYYY-MM-DD" });
         }
-
-        const dayOfWeek = requestedDate.weekday % 7;
 
         const barbershop = await Barbershop.findByPk(barbershopId);
         if (!barbershop) return res.status(404).json({ message: "Barbería no encontrada" });
@@ -790,113 +1262,45 @@ const getAvailableSlots = async (req, res) => {
             return res.status(400).json({ message: "El barbero no pertenece a la barbería seleccionada" });
         }
 
-        const barbershopServices = barbershop.services || [];
-        const serviceFromBarbershop = barbershopServices.find((s) => {
-            const id = s.id || s._id;
-            return id && id.toString() === serviceId;
+        const availability = await buildAvailableSlotsForBarber({
+            barber,
+            barbershop,
+            serviceId,
+            date
         });
 
-        let serviceDuration = null;
-
-        if (serviceFromBarbershop) {
-            const customPrice = barber.customPrices?.[serviceId];
-            if (!customPrice || !customPrice.isActive) {
-                return res.json({ availableSlots: [] });
-            }
-            serviceDuration = Number(serviceFromBarbershop.duration);
-        } else {
-            const customServices = barber.customServices || [];
-            const customService = customServices.find((s) => {
-                const id = s.id || s._id;
-                return id && id.toString() === serviceId;
-            });
-            if (!customService || !customService.isActive) {
-                return res.json({ availableSlots: [] });
-            }
-            serviceDuration = Number(customService.duration);
-        }
-
-        if (!serviceDuration || serviceDuration <= 0) {
-            return res.status(400).json({ message: "La duración del servicio no es válida" });
-        }
-
-        const schedule = barber.schedule || {};
-        const workingHours = schedule[dayOfWeek.toString()];
-        if (!workingHours || !workingHours.start || !workingHours.end) {
-            return res.json({ availableSlots: [] });
-        }
-
-        const dayStart = requestedDate.startOf("day");
-        const dayEnd = requestedDate.endOf("day");
-        const workingStart = DateTime.fromISO(`${date}T${workingHours.start}`, { zone: "America/Bogota" });
-        const workingEnd = DateTime.fromISO(`${date}T${workingHours.end}`, { zone: "America/Bogota" });
-
-        if (!workingStart.isValid || !workingEnd.isValid || workingEnd <= workingStart) {
-            return res.json({ availableSlots: [] });
-        }
-
-        const allSlots = [];
-        const slotStepMinutes = 15;
-        let current = workingStart;
-        while (current.plus({ minutes: serviceDuration }) <= workingEnd) {
-            allSlots.push({
-                start: current.toISO(),
-                end: current.plus({ minutes: serviceDuration }).toISO(),
-            });
-            current = current.plus({ minutes: slotStepMinutes });
-        }
-
-        const bookings = await Booking.findAll({
-            where: {
-                barberId,
-                status: { [Op.in]: ["pending", "confirmed"] },
-                startTime: { [Op.lt]: dayEnd.toJSDate() },
-                endTime: { [Op.gt]: dayStart.toJSDate() }
-            }
+        return res.json({
+            availableSlots: availability.slots,
+            bufferMinutes: BOOKING_BUFFER_MINUTES,
+            slotStepMinutes: SLOT_STEP_MINUTES
         });
-
-        const reservedIntervals = bookings.map((b) =>
-            Interval.fromDateTimes(
-                DateTime.fromJSDate(b.startTime, { zone: "America/Bogota" }),
-                DateTime.fromJSDate(b.endTime, { zone: "America/Bogota" })
-            )
-        );
-
-        const blocks = await AvailabilityBlock.findAll({
-            where: {
-                [Op.or]: [
-                    { appliesToAllBarbers: true },
-                    { barberId }
-                ],
-                start: { [Op.lt]: dayEnd.toJSDate() },
-                end: { [Op.gt]: dayStart.toJSDate() }
-            }
-        });
-
-        const blockedIntervals = blocks.map((b) =>
-            Interval.fromDateTimes(
-                DateTime.fromJSDate(b.start, { zone: "America/Bogota" }),
-                DateTime.fromJSDate(b.end, { zone: "America/Bogota" })
-            )
-        );
-
-        const now = DateTime.now().setZone("America/Bogota");
-        const availableSlots = allSlots.filter((slot) => {
-            const slotStart = DateTime.fromISO(slot.start, { zone: "America/Bogota" });
-            const slotEnd = DateTime.fromISO(slot.end, { zone: "America/Bogota" });
-            const slotInterval = Interval.fromDateTimes(slotStart, slotEnd);
-
-            const overlapsReservation = reservedIntervals.some((r) => r.overlaps(slotInterval));
-            const overlapsBlock = blockedIntervals.some((b) => b.overlaps(slotInterval));
-            const isPastSlot = slotStart <= now;
-
-            return !overlapsReservation && !overlapsBlock && !isPastSlot;
-        });
-
-        return res.json({ availableSlots });
 
     } catch (err) {
         handleError(res, 'Error al obtener slots disponibles', 500, err);
+    }
+};
+
+const getRecommendedBarber = async (req, res) => {
+    try {
+        const { barbershopId, serviceId, date, preferredTime } = req.query;
+        if (!barbershopId || !serviceId || !date) {
+            return res.status(400).json({ message: "barbershopId, serviceId y date son obligatorios" });
+        }
+
+        const recommendation = await recommendBarberForBooking({
+            barbershopId,
+            serviceId,
+            date,
+            preferredTime
+        });
+
+        return res.json({
+            recommendedBarber: recommendation.recommended,
+            candidates: recommendation.candidates.slice(0, 5),
+            bufferMinutes: BOOKING_BUFFER_MINUTES
+        });
+    } catch (err) {
+        handleError(res, 'Error al recomendar barbero', 500, err);
     }
 };
 
@@ -906,7 +1310,7 @@ const getMyReservations = async (req, res) => {
         const userId = req.user.id;
         const { type = "upcoming" } = req.query;
 
-        const today = DateTime.now().startOf('day');
+        const today = DateTime.now().setZone(APP_TIMEZONE).startOf('day');
         const where = { userId };
 
         if (type === "upcoming") {
@@ -929,7 +1333,7 @@ const getMyReservations = async (req, res) => {
             order: [["date", type === "past" ? "DESC" : "ASC"]]
         });
 
-        res.json({ bookings });
+        res.json({ bookings: serializeBookings(bookings) });
     } catch (err) {
         handleError(res, 'Error al obtener historial de reservas', 500, err);
     }
@@ -942,24 +1346,39 @@ const createBookingForClient = async (req, res) => {
         const staffId = req.user.id;
         const staffRole = req.user.role;
         const { userId, barbershop, barber, serviceId, date, time } = req.body;
+        const wasAutoAssigned = !barber && staffRole !== "barber";
+        let resolvedBarberId = barber;
 
         // Validar que sea barbero/admin/owner
         if (!['barber', 'admin', 'owner'].includes(staffRole)) {
             return res.status(403).json({ message: "Solo barberos, administradores u owners pueden crear reservas para clientes" });
         }
 
-        if (!userId || !barbershop || !barber || !serviceId || !date || !time) {
+        if (!userId || !barbershop || !serviceId || !date || !time) {
             return res.status(400).json({ message: "Faltan campos obligatorios" });
         }
 
-        // Validar que la fecha sea futura
-        const requestedDate = DateTime.fromISO(date);
-        if (requestedDate < DateTime.now().startOf('day')) {
-            return res.status(400).json({ message: "No se pueden hacer reservas en fechas pasadas" });
+        if (!resolvedBarberId) {
+            if (staffRole === "barber") {
+                resolvedBarberId = staffId;
+            } else {
+                const recommendation = await recommendBarberForBooking({
+                    barbershopId: barbershop,
+                    serviceId,
+                    date,
+                    preferredTime: time
+                });
+
+                if (!recommendation.recommended?.matchingSlot) {
+                    return res.status(400).json({ message: "No hay un barbero disponible para ese servicio y horario" });
+                }
+
+                resolvedBarberId = recommendation.recommended.barber.id;
+            }
         }
 
         // Validar barbero
-        const dataBarber = await User.findByPk(barber);
+        const dataBarber = await User.findByPk(resolvedBarberId);
         if (!dataBarber || dataBarber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
@@ -975,32 +1394,52 @@ const createBookingForClient = async (req, res) => {
         if (!barbershopData) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
+        if (dataBarber.barbershopId !== barbershop) {
+            return res.status(400).json({ message: "El barbero no pertenece a la barbería seleccionada" });
+        }
         if (staffRole === 'owner' && barbershopData.ownerId !== staffId) {
             return res.status(403).json({ message: "No puedes crear reservas para otra barbería" });
+        }
+        if (staffRole === 'barber' && dataBarber.id !== staffId) {
+            return res.status(403).json({ message: "Solo puedes crear reservas para tu propia agenda" });
+        }
+
+        const clientAssignment = await ensureClientAssignmentForBarbershop({
+            client: clientData,
+            barbershopId: barbershop,
+            actorRole: staffRole,
+            allowAdminOverride: true
+        });
+        if (!clientAssignment.assigned) {
+            return res.status(403).json({
+                message: "El cliente ya está asociado a otra barbería y no puede reservar en esta"
+            });
         }
 
         // Obtener servicio y precio usando la función helper
         try {
-            const { service: selectedService, price: servicePrice, serviceSource } = await getServiceAndPrice(serviceId, barber, barbershop);
+            const { service: selectedService, price: servicePrice, serviceSource } = await getServiceAndPrice(serviceId, resolvedBarberId, barbershop);
             const { name: serviceName, duration } = selectedService;
             const price = servicePrice;
 
         // Calcular tiempos
-        const localStart = DateTime.fromISO(`${date}T${time}`, { zone: 'America/Bogota' });
-        if (!localStart.isValid) return res.status(400).json({ message: "Fecha u hora inválida" });
+        const localStart = getLocalDateTime(date, time);
+        const leadTimeError = validateBookingLeadTime(localStart);
+        if (leadTimeError) return res.status(400).json({ message: leadTimeError });
 
         const localEnd = localStart.plus({ minutes: selectedService.duration });
         const startTime = localStart.toUTC().toJSDate();
         const endTime = localEnd.toUTC().toJSDate();
 
         // Validar bloqueos de disponibilidad del barbero
-        const overlappingBlock = await AvailabilityBlock.findOne({
-            where: {
-                barberId: barber,
-                start: { [Op.lt]: endTime },
-                end: { [Op.gt]: startTime }
-            }
-        });
+            const overlappingBlock = await AvailabilityBlock.findOne({
+                where: buildAvailabilityBlockWhere({
+                    barberId: resolvedBarberId,
+                    barbershopId: barbershop,
+                    startTime,
+                    endTime
+                })
+            });
 
         if (overlappingBlock) {
             return res.status(400).json({
@@ -1021,13 +1460,10 @@ const createBookingForClient = async (req, res) => {
         }
 
         // Validar solapamiento
-        const overlappingBooking = await Booking.findOne({
-            where: {
-                barberId: barber,
-                status: { [Op.in]: ["pending", "confirmed"] },
-                startTime: { [Op.lt]: endTime },
-                endTime: { [Op.gt]: startTime }
-            }
+        const overlappingBooking = await hasBufferedBookingConflict({
+            barberId: resolvedBarberId,
+            startTime,
+            endTime
         });
 
         if (overlappingBooking) {
@@ -1035,27 +1471,25 @@ const createBookingForClient = async (req, res) => {
         }
 
         // Validar horario del barbero
-        const dayIndex = localStart.weekday % 7; // 0..6
-        const barberSchedule = dataBarber.schedule?.[dayIndex.toString()];
-        if (!barberSchedule || !barberSchedule.start || !barberSchedule.end) {
-            return res.status(400).json({ message: `El barbero no trabaja ese día` });
+        const workingWindow = resolveBarberWorkingWindow({
+            localDate: localStart,
+            barber: dataBarber,
+            barbershop: barbershopData
+        });
+        if (!workingWindow) {
+            return res.status(400).json({ message: `No hay horario disponible para el barbero ese día` });
         }
 
-        const [startHour, startMinute] = barberSchedule.start.split(":").map(Number);
-        const [endHour, endMinute] = barberSchedule.end.split(":").map(Number);
-        const barberStart = localStart.set({ hour: startHour, minute: startMinute });
-        const barberEnd = localStart.set({ hour: endHour, minute: endMinute });
-
-        if (localStart < barberStart || localEnd > barberEnd) {
+        if (localStart < workingWindow.windowStart || localEnd > workingWindow.windowEnd) {
             return res.status(400).json({
-                message: `El barbero solo trabaja entre ${barberSchedule.start} y ${barberSchedule.end}`
+                message: `El barbero solo trabaja entre ${workingWindow.startLabel} y ${workingWindow.endLabel}`
             });
         }
 
             // Crear reserva
             const booking = await Booking.create({
                 userId: userId,
-                barberId: barber,
+                barberId: resolvedBarberId,
                 barbershopId: barbershop,
                 date,
                 time,
@@ -1067,6 +1501,14 @@ const createBookingForClient = async (req, res) => {
                 status: "confirmed", // Confirmada automáticamente cuando la crea el staff
                 createdById: staffId // Campo para rastrear quién creó la reserva
             });
+            appendBookingHistory(booking, {
+                type: "created_by_staff",
+                actorId: staffId,
+                actorRole: staffRole,
+                status: booking.status,
+                assignmentMode: wasAutoAssigned ? "auto" : "manual"
+            });
+            await booking.save();
 
             // Cargar relaciones para respuesta
             await booking.reload({
@@ -1077,9 +1519,13 @@ const createBookingForClient = async (req, res) => {
                 ]
             });
 
+            triggerBookingNotification(booking.id, "booking_created", {
+                status: booking.status,
+                createdByRole: staffRole
+            });
             res.status(201).json({ 
                 message: "Reserva creada correctamente para el cliente", 
-                booking 
+                booking: serializeBooking(booking)
             });
 
         } catch (serviceError) {
@@ -1091,15 +1537,15 @@ const createBookingForClient = async (req, res) => {
     }
 };
 
-// Modificar barbero de una reserva (solo admin)
+// Modificar barbero de una reserva (admin global u owner de la barbería)
 const changeBookingBarber = async (req, res) => {
     try {
         const { id } = req.params;
         const { newBarberId } = req.body;
         const userRole = req.user.role;
 
-        if (userRole !== 'admin') {
-            return res.status(403).json({ message: "Solo los administradores pueden modificar el barbero de una reserva" });
+        if (!['admin', 'owner'].includes(userRole)) {
+            return res.status(403).json({ message: "Solo el administrador de la barbería puede modificar el barbero de una reserva" });
         }
 
         if (!newBarberId) {
@@ -1109,6 +1555,13 @@ const changeBookingBarber = async (req, res) => {
         const booking = await Booking.findByPk(id);
         if (!booking) {
             return res.status(404).json({ message: "Reserva no encontrada" });
+        }
+
+        if (userRole === 'owner') {
+            const ownerShopIds = await getOwnerBarbershopIds(req.user.id);
+            if (!ownerShopIds.includes(booking.barbershopId)) {
+                return res.status(403).json({ message: "No autorizado para modificar reservas de otra barbería" });
+            }
         }
 
         // Validar que la reserva no esté cancelada o completada
@@ -1121,36 +1574,34 @@ const changeBookingBarber = async (req, res) => {
         if (!newBarber || newBarber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
-
-        // Validar que el nuevo barbero trabaje en la fecha y hora de la reserva
-        const localStart = DateTime.fromISO(`${booking.date}T${booking.time}`, { zone: 'America/Bogota' });
-        const dayIndex = localStart.weekday % 7;
-        const barberSchedule = newBarber.schedule?.get(dayIndex.toString());
-        
-        if (!barberSchedule || !barberSchedule.start || !barberSchedule.end) {
-            return res.status(400).json({ message: `El nuevo barbero no trabaja ese día` });
+        if (newBarber.barbershopId !== booking.barbershopId) {
+            return res.status(400).json({ message: "El nuevo barbero debe pertenecer a la misma barbería" });
         }
 
-        const [startHour, startMinute] = barberSchedule.start.split(":").map(Number);
-        const [endHour, endMinute] = barberSchedule.end.split(":").map(Number);
-        const barberStart = localStart.set({ hour: startHour, minute: startMinute });
-        const barberEnd = localStart.set({ hour: endHour, minute: endMinute });
+        // Validar que el nuevo barbero trabaje en la fecha y hora de la reserva
+        const localStart = getLocalDateTime(booking.date, booking.time);
+        const barbershop = await Barbershop.findByPk(booking.barbershopId);
+        const workingWindow = resolveBarberWorkingWindow({
+            localDate: localStart,
+            barber: newBarber,
+            barbershop
+        });
+        if (!workingWindow) {
+            return res.status(400).json({ message: `No hay horario disponible para el nuevo barbero ese día` });
+        }
 
-        if (localStart < barberStart || localStart.plus({ minutes: booking.serviceDuration }) > barberEnd) {
+        if (localStart < workingWindow.windowStart || localStart.plus({ minutes: booking.serviceDuration }) > workingWindow.windowEnd) {
             return res.status(400).json({
                 message: `El nuevo barbero no está disponible en ese horario`
             });
         }
 
         // Validar que no haya conflictos con el nuevo barbero
-        const overlappingBooking = await Booking.findOne({
-            where: {
-                barberId: newBarberId,
-                id: { [Op.ne]: booking.id },
-                status: { [Op.in]: ["pending", "confirmed"] },
-                startTime: { [Op.lt]: booking.endTime },
-                endTime: { [Op.gt]: booking.startTime }
-            }
+        const overlappingBooking = await hasBufferedBookingConflict({
+            barberId: newBarberId,
+            startTime: booking.startTime,
+            endTime: booking.endTime,
+            excludeBookingId: booking.id
         });
 
         if (overlappingBooking) {
@@ -1159,11 +1610,12 @@ const changeBookingBarber = async (req, res) => {
 
         // Validar bloqueos de disponibilidad del nuevo barbero
         const overlappingBlock = await AvailabilityBlock.findOne({
-            where: {
+            where: buildAvailabilityBlockWhere({
                 barberId: newBarberId,
-                start: { [Op.lt]: booking.endTime },
-                end: { [Op.gt]: booking.startTime }
-            }
+                barbershopId: booking.barbershopId,
+                startTime: booking.startTime,
+                endTime: booking.endTime
+            })
         });
 
         if (overlappingBlock) {
@@ -1176,6 +1628,14 @@ const changeBookingBarber = async (req, res) => {
         const oldBarberId = booking.barberId;
         booking.barberId = newBarberId;
         booking.modifiedById = req.user.id; // Campo para rastrear quién modificó la reserva
+        appendBookingHistory(booking, {
+            type: "barber_changed",
+            actorId: req.user.id,
+            actorRole: userRole,
+            oldBarberId,
+            newBarberId,
+            status: booking.status
+        });
         await booking.save();
 
         // Cargar relaciones para respuesta
@@ -1187,9 +1647,13 @@ const changeBookingBarber = async (req, res) => {
             ]
         });
 
+        triggerBookingNotification(booking.id, "booking_barber_changed", {
+            oldBarberId,
+            newBarberId
+        });
         res.json({ 
             message: "Barbero de la reserva actualizado correctamente", 
-            booking,
+            booking: serializeBooking(booking),
             oldBarberId,
             newBarberId
         });
@@ -1210,6 +1674,12 @@ const getBookingsWithAutoUpdate = async (req, res) => {
 
         if (role === 'barber') {
             where.barberId = userId;
+        } else if (role === 'owner') {
+            const ownerShopIds = await getOwnerBarbershopIds(userId);
+            if (ownerShopIds.length === 0) {
+                return res.status(200).json({ bookings: [], lastUpdate: new Date().toISOString(), totalCount: 0 });
+            }
+            where.barbershopId = { [Op.in]: ownerShopIds };
         } else if (role !== 'admin') {
             where.userId = userId;
         }
@@ -1230,7 +1700,7 @@ const getBookingsWithAutoUpdate = async (req, res) => {
 
         // Agregar timestamp para detectar cambios en el frontend
         const response = {
-            bookings,
+            bookings: serializeBookings(bookings),
             lastUpdate: new Date().toISOString(),
             totalCount: bookings.length
         };
@@ -1255,6 +1725,22 @@ const getBookingStats = async (req, res) => {
             // Admin ve todo
         } else if (role === 'barber') {
             where.barberId = userId;
+        } else if (role === 'owner') {
+            const ownerShopIds = await getOwnerBarbershopIds(userId);
+            if (ownerShopIds.length === 0) {
+                return res.json({
+                    stats: {
+                        pending: 0,
+                        confirmed: 0,
+                        cancelled: 0,
+                        completed: 0,
+                        totalRevenue: 0,
+                        totalBookings: 0
+                    },
+                    lastUpdate: new Date().toISOString()
+                });
+            }
+            where.barbershopId = { [Op.in]: ownerShopIds };
         } else {
             where.userId = userId;
         }
@@ -1316,25 +1802,20 @@ const createWalkInBooking = async (req, res) => {
             return res.status(400).json({ message: "Nombre del cliente, servicio, fecha y hora son obligatorios" });
         }
 
-        // Validar que la fecha sea futura
-        const requestedDate = DateTime.fromISO(date);
-        if (requestedDate < DateTime.now().startOf('day')) {
-            return res.status(400).json({ message: "No se pueden hacer reservas en fechas pasadas" });
-        }
+        let resolvedBarberId = staffRole === 'barber' ? staffId : barberIdInput;
+        let barber = resolvedBarberId ? await User.findByPk(resolvedBarberId) : null;
+        let barbershop = barber?.barbershopId ? await Barbershop.findByPk(barber.barbershopId) : null;
 
-        const resolvedBarberId = staffRole === 'barber' ? staffId : barberIdInput;
         if (!resolvedBarberId) {
             return res.status(400).json({ message: "Barbero es obligatorio para crear una reserva walk-in" });
         }
 
         // Validar barbero
-        const barber = await User.findByPk(resolvedBarberId);
         if (!barber || barber.role !== 'barber') {
             return res.status(404).json({ message: "Barbero no encontrado" });
         }
 
         // Obtener barbería del barbero
-        const barbershop = barber.barbershopId ? await Barbershop.findByPk(barber.barbershopId) : null;
         if (!barbershop) {
             return res.status(404).json({ message: "Barbería no encontrada" });
         }
@@ -1348,8 +1829,9 @@ const createWalkInBooking = async (req, res) => {
             const { name: serviceName, duration } = selectedService;
 
             // Calcular tiempos
-            const localStart = DateTime.fromISO(`${date}T${time}`, { zone: 'America/Bogota' });
-            if (!localStart.isValid) return res.status(400).json({ message: "Fecha u hora inválida" });
+            const localStart = getLocalDateTime(date, time);
+            const leadTimeError = validateBookingLeadTime(localStart);
+            if (leadTimeError) return res.status(400).json({ message: leadTimeError });
 
             const localEnd = localStart.plus({ minutes: selectedService.duration });
             const startTime = localStart.toUTC().toJSDate();
@@ -1357,11 +1839,12 @@ const createWalkInBooking = async (req, res) => {
 
             // Validar bloqueos de disponibilidad del barbero
             const overlappingBlock = await AvailabilityBlock.findOne({
-                where: {
+                where: buildAvailabilityBlockWhere({
                     barberId: resolvedBarberId,
-                    start: { [Op.lt]: endTime },
-                    end: { [Op.gt]: startTime }
-                }
+                    barbershopId: barbershop.id,
+                    startTime,
+                    endTime
+                })
             });
 
             if (overlappingBlock) {
@@ -1371,13 +1854,10 @@ const createWalkInBooking = async (req, res) => {
             }
 
             // Validar solapamientos
-            const overlapping = await Booking.findOne({
-                where: {
-                    barberId: resolvedBarberId,
-                    status: { [Op.in]: ["pending", "confirmed"] },
-                    startTime: { [Op.lt]: endTime },
-                    endTime: { [Op.gt]: startTime }
-                }
+            const overlapping = await hasBufferedBookingConflict({
+                barberId: resolvedBarberId,
+                startTime,
+                endTime
             });
 
             if (overlapping) {
@@ -1410,13 +1890,23 @@ const createWalkInBooking = async (req, res) => {
                 walkInClient: tempClient, // Datos del cliente walk-in
                 createdById: resolvedBarberId
             });
+            appendBookingHistory(booking, {
+                type: "walk_in_created",
+                actorId: resolvedBarberId,
+                actorRole: staffRole,
+                status: booking.status
+            });
+            await booking.save();
 
+            triggerBookingNotification(booking.id, "booking_walk_in_created", {
+                createdByRole: staffRole
+            });
             res.status(201).json({ 
                 message: "Reserva walk-in creada exitosamente", 
-                booking: {
+                booking: serializeBooking({
                     ...booking.get({ plain: true }),
                     walkInClient: tempClient
-                }
+                })
             });
 
         } catch (serviceError) {
@@ -1433,6 +1923,7 @@ module.exports = {
     createBooking, 
     repeatBooking, 
     getAvailableSlots, 
+    getRecommendedBarber,
     getBarberAgenda, 
     getUserBookings, 
     updateBookingStatus, 

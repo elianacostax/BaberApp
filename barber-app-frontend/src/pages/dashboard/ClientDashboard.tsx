@@ -1,4 +1,4 @@
-import { Calendar, Clock, Scissors, Star, Plus, ArrowRight, Eye, MapPin, User, BookOpen, History, Settings, Heart, CheckCircle, XCircle } from "lucide-react";
+import { Calendar, Clock, Scissors, Star, Plus, ArrowRight, Eye, MapPin, User, BookOpen, History, Settings, Heart, CheckCircle, XCircle, CalendarPlus } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { EnhancedCard } from "@/components/ui/enhanced-card";
 import { useState, useMemo } from "react";
 import BookAppointment from "../book/BookAppointment";
+import { ModuleNavigation } from "@/components/layout/ModuleNavigation";
 
 // Removed hardcoded data - will use real data from API
 
@@ -26,6 +27,8 @@ const getStatusColor = (status: string) => {
       return "bg-primary/20 text-primary";
     case "cancelled":
       return "bg-destructive/20 text-destructive";
+    case "expired":
+      return "bg-orange-100 text-orange-700";
     default:
       return "bg-muted text-muted-foreground";
   }
@@ -42,6 +45,8 @@ const getStatusLabel = (status: string) => {
       return "Completada";
     case "cancelled":
       return "Cancelada";
+    case "expired":
+      return "Vencida";
     default:
       return status;
   }
@@ -100,6 +105,14 @@ const isUpcomingAppointment = (appointment: any) => {
   return isFutureOrToday && isActiveStatus;
 };
 
+const canCancelAppointment = (appointment: any) => {
+  if (!appointment || !['pending', 'confirmed'].includes(appointment.status)) return false;
+  const start = new Date(`${appointment.date}T${appointment.time}`);
+  if (Number.isNaN(start.getTime())) return false;
+  const diffMinutes = (start.getTime() - Date.now()) / (1000 * 60);
+  return diffMinutes > 30;
+};
+
 export default function ClientDashboard() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -128,7 +141,9 @@ export default function ClientDashboard() {
     queryKey: ['barbershops'],
     queryFn: async () => {
       const r = await api.get('/api/barbershops');
-      return r.data as Array<{ id?: string; _id?: string; name: string; location?: string; address?: string }>;
+      const payload = r.data;
+      const list = Array.isArray(payload) ? payload : (payload?.barbershops ?? payload?.data ?? []);
+      return list as Array<{ id?: string; _id?: string; name: string; location?: string; address?: string }>;
     },
   });
 
@@ -343,6 +358,7 @@ export default function ClientDashboard() {
               <SelectItem value="all">Todos</SelectItem>
               <SelectItem value="pending">Pendiente</SelectItem>
               <SelectItem value="confirmed">Confirmada</SelectItem>
+              <SelectItem value="expired">Vencida</SelectItem>
               <SelectItem value="completed">Completada</SelectItem>
               <SelectItem value="cancelled">Cancelada</SelectItem>
             </SelectContent>
@@ -469,7 +485,7 @@ export default function ClientDashboard() {
                             </div>
 
                             <div className="flex flex-col sm:flex-row gap-2 justify-end pt-4 border-t border-border/50">
-                              {appointment.status !== 'cancelled' && (
+                              {canCancelAppointment(appointment) && (
                                 <Button 
                                   variant="destructive" 
                                   onClick={() => cancelMutation.mutate(getId(appointment))}
@@ -484,7 +500,7 @@ export default function ClientDashboard() {
                         </DialogContent>
                       </Dialog>
                         
-                      {appointment.status !== 'cancelled' && (
+                      {canCancelAppointment(appointment) && (
                         <Button 
                           variant="destructive" 
                           size="sm"
@@ -604,6 +620,7 @@ export default function ClientDashboard() {
               <SelectItem value="all">Todos</SelectItem>
               <SelectItem value="pending">Pendiente</SelectItem>
               <SelectItem value="confirmed">Confirmada</SelectItem>
+              <SelectItem value="expired">Vencida</SelectItem>
               <SelectItem value="completed">Completada</SelectItem>
               <SelectItem value="cancelled">Cancelada</SelectItem>
             </SelectContent>
@@ -713,7 +730,7 @@ export default function ClientDashboard() {
                           </div>
 
                           <div className="flex flex-col sm:flex-row gap-2 justify-end pt-4 border-t border-border/50">
-                            {appointment.status !== 'cancelled' && (
+                            {canCancelAppointment(appointment) && (
                               <Button 
                                 variant="destructive" 
                                 onClick={() => cancelMutation.mutate(getId(appointment))}
@@ -728,7 +745,7 @@ export default function ClientDashboard() {
                       </DialogContent>
                     </Dialog>
                       
-                    {appointment.status !== 'cancelled' && (
+                    {canCancelAppointment(appointment) && (
                       <Button 
                         variant="destructive" 
                         size="sm"
@@ -777,7 +794,7 @@ export default function ClientDashboard() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const historyAppointments = (normalizedBookings ?? []).filter(appointment => {
-      const statusMatch = appointment.status === 'completed' || appointment.status === 'cancelled';
+      const statusMatch = appointment.status === 'completed' || appointment.status === 'cancelled' || appointment.status === 'expired';
       const [yy, mm, dd] = String(appointment.date || '').split('-').map(Number);
       const apptDate = (yy && mm && dd)
         ? new Date(yy, mm - 1, dd)
@@ -871,6 +888,7 @@ export default function ClientDashboard() {
                 <SelectItem value="all">Todos</SelectItem>
                 <SelectItem value="completed">Completadas</SelectItem>
                 <SelectItem value="cancelled">Canceladas</SelectItem>
+                <SelectItem value="expired">Vencidas</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1237,37 +1255,27 @@ export default function ClientDashboard() {
   return (
     <div className="space-y-6">
       {/* Navigation */}
-      <div className="bg-card/50 backdrop-blur-sm border border-border rounded-lg p-4">
-        <div className="flex flex-wrap gap-2">
-          {modules.map((module) => {
-            const Icon = module.icon;
-            const isActive = activeModule === module.id;
-            return (
-              <Button
-                key={module.id}
-                variant={isActive ? 'default' : 'outline'}
-                onClick={() => setActiveModule(module.id)}
-                className={`flex items-center gap-2 transition-all duration-200 ${
-                  isActive 
-                    ? 'bg-primary text-primary-foreground shadow-md' 
-                    : 'hover:bg-primary/10 hover:text-primary'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {module.label}
-                {isActive && (
-                  <div className="w-2 h-2 bg-primary-foreground rounded-full ml-1" />
-                )}
-              </Button>
-            );
-          })}
-        </div>
-      </div>
+      <ModuleNavigation modules={modules} activeModule={activeModule} onChange={setActiveModule} />
 
       {/* Module Content */}
       <div className="min-h-[600px]">
         {renderModule()}
       </div>
+
+      {activeModule === 'overview' && (
+        <Button
+          size="lg"
+          className="fixed bottom-6 right-6 z-50 rounded-full px-5 py-6 shadow-lg shadow-primary/30 btn-premium"
+          onClick={() => {
+            setBookingPrefill({});
+            setActiveModule('appointments');
+            setShowBookingForm(true);
+          }}
+        >
+          <CalendarPlus className="h-5 w-5 mr-2" />
+          Reservar ahora
+        </Button>
+      )}
     </div>
   );
 }

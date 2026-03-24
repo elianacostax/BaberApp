@@ -67,7 +67,7 @@ const Booking = sequelize.define(
     },
     status: {
       type: DataTypes.ENUM("pending", "confirmed", "cancelled", "completed"),
-      defaultValue: "pending",
+      defaultValue: "confirmed",
     },
     walkInClient: {
       type: DataTypes.JSONB,

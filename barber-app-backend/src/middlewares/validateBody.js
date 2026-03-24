@@ -182,9 +182,8 @@ const schemas = {
             'string.pattern.base': 'ID de barbería inválido',
             'any.required': 'La barbería es obligatoria'
         }),
-        barber: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
+        barber: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).optional().allow('').messages({
             'string.pattern.base': 'ID de barbero inválido',
-            'any.required': 'El barbero es obligatorio'
         }),
         serviceId: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de servicio inválido',
@@ -234,9 +233,8 @@ const schemas = {
             'string.pattern.base': 'ID de barbería inválido',
             'any.required': 'La barbería es obligatoria'
         }),
-        barber: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
+        barber: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).optional().allow('').messages({
             'string.pattern.base': 'ID de barbero inválido',
-            'any.required': 'El barbero es obligatorio'
         }),
         serviceId: Joi.string().guid({ version: ['uuidv4', 'uuidv5'] }).required().messages({
             'string.pattern.base': 'ID de servicio inválido',

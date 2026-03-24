@@ -7,11 +7,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getId } from "@/lib/id";
+import { formatReminderWindow, getSentReminderWindows, isAutoAssignedBooking } from "@/lib/booking-insights";
 import { EnhancedCard } from "@/components/ui/enhanced-card";
 import AdminUsersManagement from './admin/AdminUsersManagement';
 import AdminBarbershopsManagement from './admin/AdminBarbershopsManagement';
 import AdminReports from './admin/AdminReports';
 import AdminBookingsManagement from './admin/AdminBookingsManagement';
+import { ModuleNavigation } from "@/components/layout/ModuleNavigation";
 
 
 // Removed hardcoded stats - will use real data from API
@@ -67,7 +69,13 @@ export default function AdminDashboard() {
         user: { name: string }; 
         barber: { name: string }; 
         barbershop: { name: string }; 
-        status: string 
+        status: string;
+        history?: Array<{
+          type?: string;
+          eventType?: string;
+          assignmentMode?: string;
+          reminderWindowMinutes?: number;
+        }>;
       }>;
     }
   });
@@ -250,6 +258,16 @@ export default function AdminDashboard() {
                 <div>
                   <div className="text-sm font-medium">{booking.user?.name} con {booking.barber?.name}</div>
                   <div className="text-xs text-muted-foreground">{booking.barbershop?.name} • {booking.date} • {new Date(booking.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {isAutoAssignedBooking(booking) && (
+                      <Badge variant="secondary">Autoasignada</Badge>
+                    )}
+                    {getSentReminderWindows(booking).map((windowMinutes) => (
+                      <Badge key={`${getId(booking)}-${windowMinutes}`} variant="outline">
+                        {formatReminderWindow(windowMinutes)}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
                 <Badge variant={booking.status === 'pending' ? 'secondary' : booking.status === 'confirmed' ? 'default' : 'outline'}>
                   {booking.status}
@@ -317,32 +335,7 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       {/* Navigation */}
-      <div className="bg-card/50 backdrop-blur-sm border border-border rounded-lg p-4">
-        <div className="flex flex-wrap gap-2">
-          {modules.map((module) => {
-            const Icon = module.icon;
-            const isActive = activeModule === module.id;
-            return (
-              <Button
-                key={module.id}
-                variant={isActive ? 'default' : 'outline'}
-                onClick={() => setActiveModule(module.id)}
-                className={`flex items-center gap-2 transition-all duration-200 ${
-                  isActive 
-                    ? 'bg-primary text-primary-foreground shadow-md' 
-                    : 'hover:bg-primary/10 hover:text-primary'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {module.label}
-                {isActive && (
-                  <div className="w-2 h-2 bg-primary-foreground rounded-full ml-1" />
-                )}
-              </Button>
-            );
-          })}
-        </div>
-      </div>
+      <ModuleNavigation modules={modules} activeModule={activeModule} onChange={setActiveModule} />
 
       {/* Module Content */}
       <div className="min-h-[600px]">

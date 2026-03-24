@@ -1,6 +1,55 @@
 const Barbershop = require("../models/Barbershop");
 const User = require("../models/User");
 const { handleError } = require("../utils/errorHandler");
+const { randomUUID } = require("crypto");
+
+const DEFAULT_SERVICES_TEMPLATE = [
+    {
+        name: "Corte",
+        description: "Corte clásico de cabello",
+        price: 150,
+        duration: 30,
+        category: "haircut",
+        isActive: true,
+        isRequired: false
+    },
+    {
+        name: "Barba",
+        description: "Perfilado y arreglo de barba",
+        price: 120,
+        duration: 20,
+        category: "beard",
+        isActive: true,
+        isRequired: false
+    },
+    {
+        name: "Corte + Barba",
+        description: "Servicio combinado de corte y barba",
+        price: 220,
+        duration: 45,
+        category: "haircut",
+        isActive: true,
+        isRequired: false
+    }
+];
+
+const normalizeServiceForStorage = (service) => {
+    const id = service.id || service._id || randomUUID();
+    return {
+        id,
+        _id: id,
+        name: service.name,
+        description: service.description || "",
+        price: service.price,
+        duration: service.duration,
+        category: service.category || "other",
+        isActive: service.isActive !== undefined ? service.isActive : true,
+        isRequired: service.isRequired !== undefined ? service.isRequired : false
+    };
+};
+
+const buildDefaultServices = () =>
+    DEFAULT_SERVICES_TEMPLATE.map((service) => normalizeServiceForStorage(service));
 
 const ensureOwnerOrAdmin = async (req, barbershopId) => {
     if (req.user?.role === 'admin') return true;
@@ -23,13 +72,18 @@ const createBarbershop = async (req, res) => {
             return res.status(400).json({ message: "Nombre, dirección y ubicación son obligatorios" });
         }
 
+        const hasProvidedServices = Array.isArray(services) && services.length > 0;
+        const normalizedServices = hasProvidedServices
+            ? services.map((service) => normalizeServiceForStorage(service))
+            : buildDefaultServices();
+
         const barbershop = await Barbershop.create({
             name,
             address: resolvedAddress,
             location: resolvedLocation,
             phone,
             ownerId: ownerId,
-            services: services || [],
+            services: normalizedServices,
             openingHours: openingHours || { openHour: 9, closeHour: 18 },
             description: description || null,
             isActive: isActive !== undefined ? isActive : true
@@ -149,6 +203,7 @@ const addServiceToBarbershop = async (req, res) => {
 
         const services = barbershop.services || [];
         services.push({ 
+            id: randomUUID(),
             name, 
             price, 
             duration,
@@ -157,6 +212,8 @@ const addServiceToBarbershop = async (req, res) => {
             isActive: true,
             isRequired: isRequired || false
         });
+        const lastService = services[services.length - 1];
+        lastService._id = lastService.id;
         barbershop.services = services;
         await barbershop.save();
 

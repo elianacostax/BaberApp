@@ -188,7 +188,7 @@ const formatDate = (dateString: string) => {
           </div>
         </div>
         <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="w-[200px]">
+          <SelectTrigger className="w-full sm:w-[200px]">
             <SelectValue placeholder="Ordenar por" />
           </SelectTrigger>
           <SelectContent>
@@ -226,7 +226,7 @@ const formatDate = (dateString: string) => {
           filteredClients.map((client) => (
             <Card key={getId(client)} className="card-premium hover:shadow-lg transition-shadow">
               <CardContent className="p-6">
-                <div className="flex items-start justify-between mb-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <Avatar className="h-12 w-12">
                       <AvatarFallback className="bg-gradient-premium text-primary-foreground">
@@ -244,11 +244,12 @@ const formatDate = (dateString: string) => {
                         variant="outline" 
                         size="sm"
                         onClick={() => setSelectedClient(client)}
+                        className="w-full sm:w-auto"
                       >
                         Ver Detalles
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-2xl">
+                    <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
                       <DialogHeader>
                         <DialogTitle>Detalles del Cliente</DialogTitle>
                       </DialogHeader>

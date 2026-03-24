@@ -578,7 +578,7 @@ const formatTime = (timeString: string) => {
                               Ver
                             </Button>
                           </DialogTrigger>
-                          <DialogContent className="max-w-2xl">
+                          <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
                             <DialogHeader>
                               <DialogTitle>Detalle de la Cita</DialogTitle>
                             </DialogHeader>
@@ -595,7 +595,7 @@ const formatTime = (timeString: string) => {
                                 </div>
                               </div>
 
-                              <div className="grid grid-cols-2 gap-6">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                                 <div>
                                   <h4 className="font-semibold mb-3">Información de la Cita</h4>
                                   <div className="space-y-2 text-sm">

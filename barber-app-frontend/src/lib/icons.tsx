@@ -127,6 +127,7 @@ export const StatusIcons = {
   active: Check,
   inactive: X,
   pending: Clock,
+  expired: Clock,
   completed: Check,
   cancelled: X,
   confirmed: Check,

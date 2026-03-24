@@ -4,7 +4,7 @@ import { getStatusIcon, StatusIcons } from "@/lib/icons";
 import { colors } from "@/lib/styles";
 
 interface StatusBadgeProps {
-  status: 'active' | 'inactive' | 'pending' | 'completed' | 'cancelled' | 'confirmed';
+  status: 'active' | 'inactive' | 'pending' | 'expired' | 'completed' | 'cancelled' | 'confirmed';
   showIcon?: boolean;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
@@ -27,6 +27,12 @@ const statusConfig = {
     label: 'Pendiente',
     variant: 'outline' as const,
     className: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+    iconColor: colors.warning[600],
+  },
+  expired: {
+    label: 'Vencida',
+    variant: 'outline' as const,
+    className: 'bg-orange-100 text-orange-800 border-orange-200',
     iconColor: colors.warning[600],
   },
   completed: {
